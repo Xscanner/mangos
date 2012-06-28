@@ -2300,8 +2300,6 @@ void PlayerbotAI::DoCombatMovement()
 
     float targetDist = m_bot->GetCombatDistance(m_targetCombat);
 
-    m_bot->SetFacingTo(m_bot->GetAngle(m_targetCombat));
-
     if (m_combatStyle == COMBAT_MELEE && !m_bot->hasUnitState(UNIT_STAT_CHASE) && ((m_movementOrder == MOVEMENT_STAY && targetDist <= ATTACK_DISTANCE) || (m_movementOrder != MOVEMENT_STAY)))
         // melee combat - chase target if in range or if we are not forced to stay
         m_bot->GetMotionMaster()->MoveChase(m_targetCombat);
@@ -2511,9 +2509,7 @@ void PlayerbotAI::DoLoot()
 
     if (m_bot->GetDistance(wo) > CONTACT_DISTANCE + wo->GetObjectBoundingRadius())
     {
-        float x, y, z;
-        wo->GetContactPoint(m_bot, x, y, z, 0.1f);
-        m_bot->GetMotionMaster()->MovePoint(wo->GetMapId(), x, y, z);
+        m_bot->GetMotionMaster()->MovePoint(wo->GetMapId(), wo->GetPositionX(), wo->GetPositionY(),wo->GetPositionZ());
         // give time to move to point before trying again
         SetIgnoreUpdateTime(1);
     }
@@ -3808,26 +3804,7 @@ bool PlayerbotAI::CastSpell(uint32 spellId)
         m_bot->CastSpell(pTarget, pSpellInfo, true);       // actually cast spell
     }
 
-    if (IsChanneledSpell(pSpellInfo))
-        m_ignoreAIUpdatesUntilTime = time(NULL) + CastTime + 1;
-    else
-        m_ignoreAIUpdatesUntilTime = time(NULL) + 2;
-
-    m_CurrentlyCastingSpellId = 0;
-
-    // if this caused the caster to move (blink) update the position
-    // I think this is normally done on the client
-    // this should be done on spell success
-    /*
-       if (name == "Blink") {
-       float x,y,z;
-       m_bot->GetPosition(x,y,z);
-       m_bot->GetNearPoint(m_bot, x, y, z, 1, 5, 0);
-       m_bot->Relocate(x,y,z);
-       m_bot->SendHeartBeat();
-
-       }
-     */
+    m_ignoreAIUpdatesUntilTime = time(NULL) + CastTime + 1;
 
     return true;
 }
@@ -5544,7 +5521,7 @@ void PlayerbotAI::findNearbyGO()
 void PlayerbotAI::findNearbyCreature()
 {
     std::list<Creature*> creatureList;
-    float radius = INTERACTION_DISTANCE;
+    float radius = 2.5;
 
     CellPair pair(MaNGOS::ComputeCellPair(m_bot->GetPositionX(), m_bot->GetPositionY()));
     Cell cell(pair);
@@ -5578,8 +5555,8 @@ void PlayerbotAI::findNearbyCreature()
             if (m_bot->GetDistance(wo) > CONTACT_DISTANCE + wo->GetObjectBoundingRadius())
             {
                 float x, y, z;
-                wo->GetContactPoint(m_bot, x, y, z, 1.0f);
-                m_bot->GetMotionMaster()->MovePoint(wo->GetMapId(), x, y, z);
+                wo->GetContactPoint(m_bot, x, y, z, wo->GetObjectBoundingRadius());
+                m_bot->GetMotionMaster()->MovePoint(wo->GetMapId(), x, y, z, false);
                 // give time to move to point before trying again
                 SetIgnoreUpdateTime(1);
             }
@@ -8736,12 +8713,18 @@ void PlayerbotAI::_HandleCommandSkill(std::string &text, Player &fromPlayer)
         // check present spell in trainer spell list
         TrainerSpellData const* cSpells = creature->GetTrainerSpells();
         TrainerSpellData const* tSpells = creature->GetTrainerTemplateSpells();
+        TrainerSpellMap allSpells;
 
-        TrainerSpellData const* all_trainer_spells = cSpells;
-        if (!all_trainer_spells)
-            all_trainer_spells = tSpells;
-
-        if (!all_trainer_spells)
+        if (cSpells && tSpells)
+        {
+            allSpells.insert(cSpells->spellList.begin(), cSpells->spellList.end());
+            allSpells.insert(tSpells->spellList.begin(), tSpells->spellList.end());
+        }
+        else if (cSpells)
+            allSpells.insert(cSpells->spellList.begin(), cSpells->spellList.end());
+        else if (tSpells)
+            allSpells.insert(tSpells->spellList.begin(), tSpells->spellList.end());
+        else
         {
             SendWhisper("No spells can be learnt from this trainer", fromPlayer);
             return;
@@ -8765,7 +8748,14 @@ void PlayerbotAI::_HandleCommandSkill(std::string &text, Player &fromPlayer)
                 if (!spellId)
                     break;
 
-                TrainerSpell const* trainer_spell = all_trainer_spells->Find(spellId);
+                // Try find spell in npc_trainer
+                TrainerSpell const* trainer_spell = cSpells ? cSpells->Find(spellId) : NULL;
+
+                // Not found, try find in npc_trainer_template
+                if (!trainer_spell && tSpells)
+                trainer_spell = tSpells->Find(spellId);
+
+                // Not found anywhere, cheating?
                 if (!trainer_spell)
                     continue;
 
@@ -8837,7 +8827,7 @@ void PlayerbotAI::_HandleCommandSkill(std::string &text, Player &fromPlayer)
         {
             msg << "The spells I can learn and their cost:\r";
 
-            for (TrainerSpellMap::const_iterator itr =  all_trainer_spells->spellList.begin(); itr !=  all_trainer_spells->spellList.end(); ++itr)
+            for (TrainerSpellMap::const_iterator itr =  allSpells.begin(); itr !=  allSpells.end(); ++itr)
             {
                 TrainerSpell const* tSpell = &itr->second;
 
@@ -8930,13 +8920,17 @@ void PlayerbotAI::_HandleCommandSkill(std::string &text, Player &fromPlayer)
                     // has skill
                     if (skillLine->skillId == *it && skillLine->learnOnGetSkill == 0)
                     {
-                        SpellEntry const* spellInfo = sSpellStore.LookupEntry(skillLine->spellId);
+                        uint32 SpellId;
+                        m_bot->HasSpell(skillLine->forward_spellid) ? SpellId = skillLine->forward_spellid : SpellId = skillLine->spellId;
+
+                        SpellEntry const* spellInfo = sSpellStore.LookupEntry(SpellId);
                         if (!spellInfo)
                             continue;
 
-                        if (m_bot->GetSkillValue(*it) <= rank[sSpellMgr.GetSpellRank(skillLine->spellId)] && m_bot->HasSpell(skillLine->spellId))
+                        if (m_bot->GetSkillValue(*it) <= rank[sSpellMgr.GetSpellRank(SpellId)] && m_bot->HasSpell(SpellId))
                         {
                             // DEBUG_LOG ("[PlayerbotAI]: HandleCommand - skill (%u)(%u)(%u):",skillLine->spellId, rank[sSpellMgr.GetSpellRank(skillLine->spellId)], m_bot->GetSkillValue(*it));
+                            msg << "\n[" << m_bot->GetSkillValue(*it) << " / " << rank[sSpellMgr.GetSpellRank(SpellId)] << "]: ";
                             MakeSpellLink(spellInfo, msg);
                             break;
                         }
