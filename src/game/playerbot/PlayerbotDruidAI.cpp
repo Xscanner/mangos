@@ -72,7 +72,7 @@ PlayerbotDruidAI::PlayerbotDruidAI(Player* const master, Player* const bot, Play
 
 PlayerbotDruidAI::~PlayerbotDruidAI() {}
 
-bool PlayerbotDruidAI::DoFirstCombatManeuver(Unit *pTarget)
+bool PlayerbotDruidAI::DoFirstCombatManeuver(Unit* /*pTarget*/)
 {
     return false;
 }
@@ -152,12 +152,9 @@ void PlayerbotDruidAI::DoNextCombatManeuver(Unit *pTarget)
         case PlayerbotAI::SCENARIO_DUEL:
             ai->CastSpell(MOONFIRE);
             return;
+        default:
+            break;
     }
-
-    uint32 masterHP = GetMaster()->GetHealth() * 100 / GetMaster()->GetMaxHealth();
-
-    Player *m_bot = GetPlayerBot();
-    Unit* pVictim = pTarget->getVictim();
 
     if (ai->GetCombatOrder() == PlayerbotAI::ORDERS_HEAL)
         SpellSequence = DruidHeal;
@@ -511,7 +508,7 @@ void PlayerbotDruidAI::_DoNextPVECombatManeuverMeleeDPS(Unit* pTarget)
     }
 }
 
-void PlayerbotDruidAI::_DoNextPVECombatManeuverHeal(Unit* pTarget)
+void PlayerbotDruidAI::_DoNextPVECombatManeuverHeal(Unit* /*pTarget*/)
 {
     PlayerbotAI* ai = GetAI();
     if (!ai)
@@ -520,7 +517,6 @@ void PlayerbotDruidAI::_DoNextPVECombatManeuverHeal(Unit* pTarget)
     uint32 masterHP = GetMaster()->GetHealth() * 100 / GetMaster()->GetMaxHealth();
 
     Player *m_bot = GetPlayerBot();
-    Unit* pVictim = pTarget->getVictim();
 
     if (TREE_OF_LIFE > 0 && !m_bot->HasAura(TREE_OF_LIFE, EFFECT_INDEX_0))
         ai->CastSpell(TREE_OF_LIFE, *m_bot);

@@ -76,7 +76,7 @@ PlayerbotWarlockAI::PlayerbotWarlockAI(Player* const master, Player* const bot, 
 
 PlayerbotWarlockAI::~PlayerbotWarlockAI() {}
 
-bool PlayerbotWarlockAI::DoFirstCombatManeuver(Unit *pTarget)
+bool PlayerbotWarlockAI::DoFirstCombatManeuver(Unit* /*pTarget*/)
 {
     return false;
 }
@@ -90,11 +90,9 @@ void PlayerbotWarlockAI::DoNextCombatManeuver(Unit *pTarget)
     switch (ai->GetScenarioType())
     {
         case PlayerbotAI::SCENARIO_DUEL:
-        {
             if (SHADOW_BOLT > 0)
                 ai->CastSpell(SHADOW_BOLT);
             return;
-        }
         default:
             break;
     }
