@@ -34,8 +34,9 @@
 #include "InstanceData.h"
 #include "MapManager.h"
 #include "MapPersistentStateMgr.h"
-#include "BattleGround.h"
-#include "BattleGroundAV.h"
+#include "BattleGround/BattleGround.h"
+#include "BattleGround/BattleGroundAV.h"
+#include "OutdoorPvP/OutdoorPvP.h"
 #include "Util.h"
 #include "ScriptMgr.h"
 #include "SQLStorages.h"
@@ -85,6 +86,10 @@ void GameObject::RemoveFromWorld()
     ///- Remove the gameobject from the accessor
     if (IsInWorld())
     {
+        // Notify the outdoor pvp script
+        if (OutdoorPvP* outdoorPvP = sOutdoorPvPMgr.GetScript(GetZoneId()))
+            outdoorPvP->HandleGameObjectRemove(this);
+
         // Remove GO from owner
         if (ObjectGuid owner_guid = GetOwnerGuid())
         {
@@ -157,9 +162,11 @@ bool GameObject::Create(uint32 guidlow, uint32 name_id, Map* map, uint32 phaseMa
     SetGoArtKit(0);                                         // unknown what this is
     SetGoAnimProgress(animprogress);
 
-    // set initial data and activate non visual-only capture points
-    if (goinfo->type == GAMEOBJECT_TYPE_CAPTURE_POINT && goinfo->capturePoint.radius)
-        SetCapturePointSlider(CAPTURE_SLIDER_NEUTRAL);
+    // Notify the battleground or outdoor pvp script
+    if (map->IsBattleGroundOrArena())
+        ((BattleGroundMap*)map)->GetBG()->HandleGameObjectCreate(this);
+    else if (OutdoorPvP* outdoorPvP = sOutdoorPvPMgr.GetScript(GetZoneId()))
+        outdoorPvP->HandleGameObjectCreate(this);
 
     // Notify the map's instance data.
     // Only works if you create the object in it, not if it is moves to that map.
@@ -335,9 +342,8 @@ void GameObject::Update(uint32 update_diff, uint32 p_time)
                         if (IsBattleGroundTrap && ok->GetTypeId() == TYPEID_PLAYER)
                         {
                             // BattleGround gameobjects case
-                            if (((Player*)ok)->InBattleGround())
-                                if (BattleGround* bg = ((Player*)ok)->GetBattleGround())
-                                    bg->HandleTriggerBuff(GetObjectGuid());
+                            if (BattleGround* bg = ((Player*)ok)->GetBattleGround())
+                                bg->HandleTriggerBuff(GetObjectGuid());
                         }
                     }
                 }
@@ -425,6 +431,8 @@ void GameObject::Update(uint32 update_diff, uint32 p_time)
                     m_UniqueUsers.clear();
                     SetLootState(GO_READY);
                     return; // SetLootState and return because go is treated as "burning flag" due to GetGoAnimProgress() being 100 and would be removed on the client
+                default:
+                    break;
             }
 
             if (!HasStaticDBSpawnData())                    // Remove wild summoned after use
@@ -1147,6 +1155,15 @@ void GameObject::Use(Unit* user)
         }
         case GAMEOBJECT_TYPE_GOOBER:                        // 10
         {
+            // Handle OutdoorPvP use cases
+            // Note: this may be also handled by DB spell scripts in the future, when the world state manager is implemented
+            if (user->GetTypeId() == TYPEID_PLAYER)
+            {
+                Player* player = (Player*)user;
+                if (OutdoorPvP* outdoorPvP = sOutdoorPvPMgr.GetScript(player->GetCachedZoneId()))
+                    outdoorPvP->HandleGameObjectUse(player, this);
+            }
+
             GameObjectInfo const* info = GetGOInfo();
 
             TriggerLinkedGameObject(user);
@@ -1932,32 +1949,27 @@ bool GameObject::HasStaticDBSpawnData() const
     return sObjectMgr.GetGOData(GetGUIDLow()) != NULL;
 }
 
-void GameObject::SetCapturePointSlider(int8 value)
+void GameObject::SetCapturePointSlider(float value)
 {
     GameObjectInfo const* info = GetGOInfo();
 
-    switch (value)
+    // only activate non-locked capture point
+    if (value >= 0)
     {
-        case CAPTURE_SLIDER_ALLIANCE_LOCKED:
-            m_captureSlider = CAPTURE_SLIDER_ALLIANCE;
-            break;
-        case CAPTURE_SLIDER_HORDE_LOCKED:
-            m_captureSlider = CAPTURE_SLIDER_HORDE;
-            break;
-        default:
-            m_captureSlider = value;
-            SetLootState(GO_ACTIVATED);
-            break;
+        m_captureSlider = value;
+        SetLootState(GO_ACTIVATED);
     }
+    else
+        m_captureSlider = -value;
 
     // set the state of the capture point based on the slider value
-    if (m_captureSlider == CAPTURE_SLIDER_ALLIANCE)
+    if ((int)m_captureSlider == CAPTURE_SLIDER_ALLIANCE)
         m_captureState = CAPTURE_STATE_WIN_ALLIANCE;
-    else if (m_captureSlider == CAPTURE_SLIDER_HORDE)
+    else if ((int)m_captureSlider == CAPTURE_SLIDER_HORDE)
         m_captureState = CAPTURE_STATE_WIN_HORDE;
-    else if (m_captureSlider > CAPTURE_SLIDER_NEUTRAL + info->capturePoint.neutralPercent * 0.5f)
+    else if (m_captureSlider > CAPTURE_SLIDER_MIDDLE + info->capturePoint.neutralPercent * 0.5f)
         m_captureState = CAPTURE_STATE_PROGRESS_ALLIANCE;
-    else if (m_captureSlider < CAPTURE_SLIDER_NEUTRAL - info->capturePoint.neutralPercent * 0.5f)
+    else if (m_captureSlider < CAPTURE_SLIDER_MIDDLE - info->capturePoint.neutralPercent * 0.5f)
         m_captureState = CAPTURE_STATE_PROGRESS_HORDE;
     else
         m_captureState = CAPTURE_STATE_NEUTRAL;
@@ -1972,13 +1984,13 @@ void GameObject::TickCapturePoint()
 
     // search for players in radius
     std::list<Player*> capturingPlayers;
-    MaNGOS::AnyPlayerInObjectRangeWithOutdoorPvPCheck u_check(this, radius);
-    MaNGOS::PlayerListSearcher<MaNGOS::AnyPlayerInObjectRangeWithOutdoorPvPCheck> checker(capturingPlayers, u_check);
+    MaNGOS::AnyPlayerInCapturePointRange u_check(this, radius);
+    MaNGOS::PlayerListSearcher<MaNGOS::AnyPlayerInCapturePointRange> checker(capturingPlayers, u_check);
     Cell::VisitWorldObjects(this, checker, radius);
 
     GuidSet tempUsers(m_UniqueUsers);
     uint32 neutralPercent = info->capturePoint.neutralPercent;
-    uint32 oldValue = m_captureSlider;
+    int oldValue = m_captureSlider;
     int rangePlayers = 0;
 
     for (std::list<Player*>::iterator itr = capturingPlayers.begin(); itr != capturingPlayers.end(); ++itr)
@@ -2009,12 +2021,20 @@ void GameObject::TickCapturePoint()
             owner->SendUpdateWorldState(info->capturePoint.worldState1, WORLD_STATE_REMOVE);
 
         // player left capture point zone
-        m_UniqueUsers.erase((*itr));
+        m_UniqueUsers.erase(*itr);
     }
 
     // return if there are not enough players capturing the point (works because minSuperiority is always 1)
     if (rangePlayers == 0)
+    {
+        // set to inactive if all players left capture point zone
+        if (m_UniqueUsers.empty())
+            SetActiveObjectState(false);
         return;
+    }
+
+    // prevents unloading gameobject before all players left capture point zone (to prevent m_UniqueUsers not being cleared if grid is set to idle)
+    SetActiveObjectState(true);
 
     // cap speed
     int maxSuperiority = info->capturePoint.maxSuperiority;
@@ -2049,7 +2069,7 @@ void GameObject::TickCapturePoint()
     }
 
     // return if slider did not move a whole percent
-    if ((uint32)m_captureSlider == oldValue)
+    if ((int)m_captureSlider == oldValue)
         return;
 
     // on retail this is also sent to newly added players even though they already received a slider value
@@ -2061,35 +2081,41 @@ void GameObject::TickCapturePoint()
 
     /* WIN EVENTS */
     // alliance wins tower with max points
-    if (m_captureState != CAPTURE_STATE_WIN_ALLIANCE && (uint32)m_captureSlider == CAPTURE_SLIDER_ALLIANCE)
+    if (m_captureState != CAPTURE_STATE_WIN_ALLIANCE && (int)m_captureSlider == CAPTURE_SLIDER_ALLIANCE)
     {
         eventId = info->capturePoint.winEventID1;
         m_captureState = CAPTURE_STATE_WIN_ALLIANCE;
     }
     // horde wins tower with max points
-    else if (m_captureState != CAPTURE_STATE_WIN_HORDE && (uint32)m_captureSlider == CAPTURE_SLIDER_HORDE)
+    else if (m_captureState != CAPTURE_STATE_WIN_HORDE && (int)m_captureSlider == CAPTURE_SLIDER_HORDE)
     {
         eventId = info->capturePoint.winEventID2;
         m_captureState = CAPTURE_STATE_WIN_HORDE;
     }
 
     /* PROGRESS EVENTS */
-    // alliance takes the tower from neutral or contested to alliance
-    else if ((m_captureState == CAPTURE_STATE_NEUTRAL && m_captureSlider > CAPTURE_SLIDER_NEUTRAL + neutralPercent * 0.5f) || (m_captureState == CAPTURE_STATE_CONTEST_ALLIANCE && progressFaction == ALLIANCE))
+    // alliance takes the tower from neutral, contested or horde (if there is no neutral area) to alliance
+    else if (m_captureState != CAPTURE_STATE_PROGRESS_ALLIANCE && m_captureSlider > CAPTURE_SLIDER_MIDDLE + neutralPercent * 0.5f && progressFaction == ALLIANCE)
     {
         eventId = info->capturePoint.progressEventID1;
 
-        // TODO handle objective complete
+        // handle objective complete
+        if (m_captureState == CAPTURE_STATE_NEUTRAL)
+            if (OutdoorPvP* outdoorPvP = sOutdoorPvPMgr.GetScript((*capturingPlayers.begin())->GetCachedZoneId()))
+                outdoorPvP->HandleObjectiveComplete(eventId, capturingPlayers, progressFaction);
 
         // set capture state to alliance
         m_captureState = CAPTURE_STATE_PROGRESS_ALLIANCE;
     }
-    // horde takes the tower from neutral or contested to horde
-    else if ((m_captureState == CAPTURE_STATE_NEUTRAL && m_captureSlider < CAPTURE_SLIDER_NEUTRAL - neutralPercent * 0.5f) || (m_captureState == CAPTURE_STATE_CONTEST_HORDE && progressFaction == HORDE))
+    // horde takes the tower from neutral, contested or alliance (if there is no neutral area) to horde
+    else if (m_captureState != CAPTURE_STATE_PROGRESS_HORDE && m_captureSlider < CAPTURE_SLIDER_MIDDLE - neutralPercent * 0.5f && progressFaction == HORDE)
     {
         eventId = info->capturePoint.progressEventID2;
 
-        // TODO handle objective complete
+        // handle objective complete
+        if (m_captureState == CAPTURE_STATE_NEUTRAL)
+            if (OutdoorPvP* outdoorPvP = sOutdoorPvPMgr.GetScript((*capturingPlayers.begin())->GetCachedZoneId()))
+                outdoorPvP->HandleObjectiveComplete(eventId, capturingPlayers, progressFaction);
 
         // set capture state to horde
         m_captureState = CAPTURE_STATE_PROGRESS_HORDE;
@@ -2097,13 +2123,13 @@ void GameObject::TickCapturePoint()
 
     /* NEUTRAL EVENTS */
     // alliance takes the tower from horde to neutral
-    else if (m_captureState != CAPTURE_STATE_NEUTRAL && m_captureSlider >= CAPTURE_SLIDER_NEUTRAL - neutralPercent * 0.5f && m_captureSlider <= CAPTURE_SLIDER_NEUTRAL + neutralPercent * 0.5f && progressFaction == ALLIANCE)
+    else if (m_captureState != CAPTURE_STATE_NEUTRAL && m_captureSlider >= CAPTURE_SLIDER_MIDDLE - neutralPercent * 0.5f && m_captureSlider <= CAPTURE_SLIDER_MIDDLE + neutralPercent * 0.5f && progressFaction == ALLIANCE)
     {
         eventId = info->capturePoint.neutralEventID1;
         m_captureState = CAPTURE_STATE_NEUTRAL;
     }
     // horde takes the tower from alliance to neutral
-    else if (m_captureState != CAPTURE_STATE_NEUTRAL && m_captureSlider >= CAPTURE_SLIDER_NEUTRAL - neutralPercent * 0.5f && m_captureSlider <= CAPTURE_SLIDER_NEUTRAL + neutralPercent * 0.5f && progressFaction == HORDE)
+    else if (m_captureState != CAPTURE_STATE_NEUTRAL && m_captureSlider >= CAPTURE_SLIDER_MIDDLE - neutralPercent * 0.5f && m_captureSlider <= CAPTURE_SLIDER_MIDDLE + neutralPercent * 0.5f && progressFaction == HORDE)
     {
         eventId = info->capturePoint.neutralEventID2;
         m_captureState = CAPTURE_STATE_NEUTRAL;
@@ -2125,6 +2151,20 @@ void GameObject::TickCapturePoint()
 
     if (eventId)
     {
+        // Notify the battleground or outdoor pvp script
+        if (BattleGround* bg = (*capturingPlayers.begin())->GetBattleGround())
+        {
+            // Allow only certain events to be handled by other script engines
+            if (bg->HandleEvent(eventId, this))
+                return;
+        }
+        else if (OutdoorPvP* outdoorPvP = sOutdoorPvPMgr.GetScript((*capturingPlayers.begin())->GetCachedZoneId()))
+        {
+            // Allow only certain events to be handled by other script engines
+            if (outdoorPvP->HandleEvent(eventId, this))
+                return;
+        }
+
         // Send script event to SD2 and database as well - this can be used for summoning creatures, casting specific spells or spawning GOs
         if (!sScriptMgr.OnProcessEvent(eventId, this, this, true))
             GetMap()->ScriptsStart(sEventScripts, eventId, this, this);

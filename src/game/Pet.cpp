@@ -312,10 +312,9 @@ bool Pet::LoadPetFromDB(Player* owner, uint32 petentry, uint32 petnumber, bool c
 
         if (result)
         {
-            if (m_declinedname)
-                delete m_declinedname;
-
+            delete m_declinedname;
             m_declinedname = new DeclinedName;
+
             Field* fields2 = result->Fetch();
             for (int i = 0; i < MAX_DECLINED_NAME_CASES; ++i)
                 m_declinedname->name[i] = fields2[i].GetCppString();
@@ -918,6 +917,11 @@ bool Pet::InitStatsForLevel(uint32 petlevel, Unit* owner)
             // this enables popup window (pet abandon, cancel)
             SetUInt32Value(UNIT_FIELD_FLAGS, UNIT_FLAG_PVP_ATTACKABLE);
             break;
+        case GUARDIAN_PET:
+        case MINI_PET:
+        case PROTECTOR_PET:
+        default:
+            break;
     }
 
     SetLevel(petlevel);
@@ -1391,7 +1395,7 @@ void Pet::_SaveAuras()
 
         // skip all holders from spells that are passive or channeled
         // do not save single target holders (unless they were cast by the player)
-        if (save && !holder->IsPassive() && !IsChanneledSpell(holder->GetSpellProto()) && (holder->GetCasterGuid() == GetObjectGuid() || !holder->IsSingleTarget()))
+        if (save && !holder->IsPassive() && !IsChanneledSpell(holder->GetSpellProto()) && (holder->GetCasterGuid() == GetObjectGuid() || holder->GetTrackedAuraType() != TRACK_AURA_TYPE_NOT_TRACKED))
         {
             int32  damage[MAX_EFFECT_INDEX];
             uint32 periodicTime[MAX_EFFECT_INDEX];

@@ -403,7 +403,7 @@ void MySqlPreparedStatement::bind(const SqlStmtParameters& holder)
         return;
     }
 
-    int nIndex = 0;
+    unsigned int nIndex = 0;
     SqlStmtParameters::ParameterContainer const& _args = holder.params();
 
     SqlStmtParameters::ParameterContainer::const_iterator iter_last = _args.end();
@@ -421,7 +421,7 @@ void MySqlPreparedStatement::bind(const SqlStmtParameters& holder)
     }
 }
 
-void MySqlPreparedStatement::addParam(int nIndex, const SqlStmtFieldData& data)
+void MySqlPreparedStatement::addParam(unsigned int nIndex, const SqlStmtFieldData& data)
 {
     MANGOS_ASSERT(m_pInputArgs);
     MANGOS_ASSERT(nIndex < m_nParams);
@@ -444,8 +444,8 @@ void MySqlPreparedStatement::RemoveBinds()
     if (!m_stmt)
         return;
 
-    delete [] m_pInputArgs;
-    delete [] m_pResult;
+    delete[] m_pInputArgs;
+    delete[] m_pResult;
 
     mysql_free_result(m_pResultMetadata);
     mysql_stmt_close(m_stmt);

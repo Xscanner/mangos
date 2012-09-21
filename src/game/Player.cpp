@@ -49,9 +49,10 @@
 #include "Util.h"
 #include "Transports.h"
 #include "Weather.h"
-#include "BattleGround.h"
-#include "BattleGroundAV.h"
-#include "BattleGroundMgr.h"
+#include "BattleGround/BattleGround.h"
+#include "BattleGround/BattleGroundMgr.h"
+#include "BattleGround/BattleGroundAV.h"
+#include "OutdoorPvP/OutdoorPvP.h"
 #include "ArenaTeam.h"
 #include "Chat.h"
 #include "Database/DatabaseImpl.h"
@@ -180,6 +181,7 @@ void PlayerTaxi::InitTaxiNodesForLevel(uint32 race, uint32 chrClass, uint32 leve
     {
         case ALLIANCE: SetTaximaskNode(100); break;
         case HORDE:    SetTaximaskNode(99);  break;
+        default: break;
     }
     // level dependent taxi hubs
     if (level >= 68)
@@ -581,8 +583,7 @@ Player::~Player()
     // Note: buy back item already deleted from DB when player was saved
     for (int i = 0; i < PLAYER_SLOTS_COUNT; ++i)
     {
-        if (m_items[i])
-            delete m_items[i];
+        delete m_items[i];
     }
     CleanupChannels();
 
@@ -601,8 +602,7 @@ Player::~Player()
     }
 
     for (size_t x = 0; x < ItemSetEff.size(); ++x)
-        if (ItemSetEff[x])
-            delete ItemSetEff[x];
+        delete ItemSetEff[x];
 
     // clean up player-instance binds, may unload some instance saves
     for (uint8 i = 0; i < MAX_DIFFICULTY; ++i)
@@ -630,6 +630,10 @@ void Player::CleanupsBeforeDelete()
         TradeCancel(false);
         DuelComplete(DUEL_INTERUPTED);
     }
+
+    // notify zone scripts for player logout
+    sOutdoorPvPMgr.HandlePlayerLeaveZone(this, m_zoneUpdateId);
+
     Unit::CleanupsBeforeDelete();
 }
 
@@ -1646,13 +1650,15 @@ uint8 Player::GetChatTag() const
     return tag;
 }
 
-bool Player::TeleportTo(uint32 mapid, float x, float y, float z, float orientation, uint32 options)
+bool Player::TeleportTo(uint32 mapid, float x, float y, float z, float orientation, uint32 options /*=0*/, AreaTrigger const* at /*=NULL*/)
 {
     if (!MapManager::IsValidMapCoord(mapid, x, y, z, orientation))
     {
         sLog.outError("TeleportTo: invalid map %d or absent instance template.", mapid);
         return false;
     }
+
+    MapEntry const* mEntry = sMapStore.LookupEntry(mapid);  // Validity checked in IsValidMapCoord
 
     // preparing unsummon pet if lost (we must get pet before teleportation or will not find it later)
     Pet* pet = GetPet();
@@ -1662,31 +1668,39 @@ bool Player::TeleportTo(uint32 mapid, float x, float y, float z, float orientati
     if (GetPlayerbotMgr())
         GetPlayerbotMgr()->Stay();
 
-    MapEntry const* mEntry = sMapStore.LookupEntry(mapid);
-
     // don't let enter battlegrounds without assigned battleground id (for example through areatrigger)...
     // don't let gm level > 1 either
     if (!InBattleGround() && mEntry->IsBattleGroundOrArena())
         return false;
 
-    // client without expansion support
-    if (GetSession()->Expansion() < mEntry->Expansion())
+    // Get MapEntrance trigger if teleport to other -nonBG- map
+    bool assignedAreaTrigger = false;
+    if (GetMapId() != mapid && !mEntry->IsBattleGroundOrArena() && !at)
     {
-        DEBUG_LOG("Player %s using client without required expansion tried teleport to non accessible map %u", GetName(), mapid);
-
-        if (GetTransport())
-            RepopAtGraveyard();                             // teleport to near graveyard if on transport, looks blizz like :)
-
-        SendTransferAborted(mapid, TRANSFER_ABORT_INSUF_EXPAN_LVL, mEntry->Expansion());
-
-        return false;                                       // normal client can't teleport to this map...
-    }
-    else
-    {
-        DEBUG_LOG("Player %s is being teleported to map %u", GetName(), mapid);
+        at = sObjectMgr.GetMapEntranceTrigger(mapid);
+        assignedAreaTrigger = true;
     }
 
-    if (Group* grp = GetGroup())
+    // Check requirements for teleport
+    if (at)
+    {
+        uint32 miscRequirement = 0;
+        AreaLockStatus lockStatus = GetAreaTriggerLockStatus(at, GetDifficulty(mEntry->IsRaid()), miscRequirement);
+        if (lockStatus != AREA_LOCKSTATUS_OK)
+        {
+            // Teleport not requested by area-trigger
+            // TODO - Assume a player with expansion 0 travels from BootyBay to Ratched, and he is attempted to be teleported to outlands
+            //        then he will repop near BootyBay instead of normally continuing his journey
+            // This code is probably added to catch passengers on ships to northrend who shouldn't go there
+            if (lockStatus == AREA_LOCKSTATUS_INSUFFICIENT_EXPANSION && !assignedAreaTrigger && GetTransport())
+                RepopAtGraveyard();                         // Teleport to near graveyard if on transport, looks blizz like :)
+
+            SendTransferAbortedByLockStatus(mEntry, lockStatus, miscRequirement);
+            return false;
+        }
+    }
+
+    if (Group* grp = GetGroup())                            // TODO: Verify that this is correct place
         grp->SetPlayerMap(GetObjectGuid(), mapid);
 
     // if we were on a transport, leave
@@ -1708,7 +1722,7 @@ bool Player::TeleportTo(uint32 mapid, float x, float y, float z, float orientati
     m_movementInfo.SetMovementFlags(MOVEFLAG_NONE);
     DisableSpline();
 
-    if ((GetMapId() == mapid) && (!m_transport))
+    if ((GetMapId() == mapid) && (!m_transport))            // TODO the !m_transport might have unexpected effects when teleporting from transport to other place on same map
     {
         // lets reset far teleport flag if it wasn't reset during chained teleports
         SetSemaphoreTeleportFar(false);
@@ -1755,16 +1769,11 @@ bool Player::TeleportTo(uint32 mapid, float x, float y, float z, float orientati
         Map* oldmap = IsInWorld() ? GetMap() : NULL;
         // check if we can enter before stopping combat / removing pet / totems / interrupting spells
 
-        // Check enter rights before map getting to avoid creating instance copy for player
-        // this check not dependent from map instance copy and same for all instance copies of selected map
-        if (!sMapMgr.CanPlayerEnter(mapid, this))
-            return false;
-
         // If the map is not created, assume it is possible to enter it.
         // It will be created in the WorldPortAck.
         DungeonPersistentState* state = GetBoundInstanceSaveForSelfOrGroup(mapid);
         Map* map = sMapMgr.FindMap(mapid, state ? state->GetInstanceId() : 0);
-        if (!map ||  map->CanEnter(this))
+        if (!map || map->CanEnter(this))
         {
             // lets reset near teleport flag if it wasn't reset during chained teleports
             SetSemaphoreTeleportNear(false);
@@ -1876,7 +1885,7 @@ bool Player::TeleportTo(uint32 mapid, float x, float y, float z, float orientati
                 SendSavedInstances();
             }
         }
-        else
+        else                                                // !map->CanEnter(this)
             return false;
     }
     return true;
@@ -2328,7 +2337,7 @@ void Player::SetGameMaster(bool on)
 
         // restore phase
         AuraList const& phases = GetAurasByType(SPELL_AURA_PHASE);
-        SetPhaseMask(!phases.empty() ? phases.front()->GetMiscValue() : PHASEMASK_NORMAL, false);
+        SetPhaseMask(!phases.empty() ? phases.front()->GetMiscValue() : uint32(PHASEMASK_NORMAL), false);
 
         CallForAllControlledUnits(SetGameMasterOffHelper(getFaction()), CONTROLLED_PET | CONTROLLED_TOTEMS | CONTROLLED_GUARDIANS | CONTROLLED_CHARM);
 
@@ -2385,7 +2394,7 @@ bool Player::IsGroupVisibleFor(Player* p) const
 bool Player::IsInSameGroupWith(Player const* p) const
 {
     return (p == this || (GetGroup() != NULL &&
-                          GetGroup()->SameSubGroup((Player*)this, (Player*)p)));
+                          GetGroup()->SameSubGroup(this, p)));
 }
 
 ///- If the player is invited, remove him. If the group if then only 1 person, disband the group.
@@ -4360,19 +4369,17 @@ void Player::DeleteOldCharacters(uint32 keepDays)
     }
 }
 
-void Player::SetMovement(PlayerMovementType pType)
+void Player::SetRoot(bool enable)
 {
-    WorldPacket data;
-    switch (pType)
-    {
-        case MOVE_ROOT:       data.Initialize(SMSG_FORCE_MOVE_ROOT,   GetPackGUID().size() + 4); break;
-        case MOVE_UNROOT:     data.Initialize(SMSG_FORCE_MOVE_UNROOT, GetPackGUID().size() + 4); break;
-        case MOVE_WATER_WALK: data.Initialize(SMSG_MOVE_WATER_WALK,   GetPackGUID().size() + 4); break;
-        case MOVE_LAND_WALK:  data.Initialize(SMSG_MOVE_LAND_WALK,    GetPackGUID().size() + 4); break;
-        default:
-            sLog.outError("Player::SetMovement: Unsupported move type (%d), data not sent to client.", pType);
-            return;
-    }
+    WorldPacket data(enable ? SMSG_FORCE_MOVE_ROOT : SMSG_FORCE_MOVE_UNROOT, GetPackGUID().size() + 4);
+    data << GetPackGUID();
+    data << uint32(0);
+    GetSession()->SendPacket(&data);
+}
+
+void Player::SetWaterWalk(bool enable)
+{
+    WorldPacket data(enable ? SMSG_MOVE_WATER_WALK : SMSG_MOVE_LAND_WALK, GetPackGUID().size() + 4);
     data << GetPackGUID();
     data << uint32(0);
     GetSession()->SendPacket(&data);
@@ -4415,9 +4422,9 @@ void Player::BuildPlayerRepop()
     // convert player body to ghost
     SetHealth(1);
 
-    SetMovement(MOVE_WATER_WALK);
+    SetWaterWalk(true);
     if (!GetSession()->isLogingOut())
-        SetMovement(MOVE_UNROOT);
+        SetRoot(false);
 
     // BG - remove insignia related
     RemoveFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_SKINNABLE);
@@ -4453,8 +4460,8 @@ void Player::ResurrectPlayer(float restore_percent, bool applySickness)
         RemoveAurasDueToSpell(20584);                       // speed bonuses
     RemoveAurasDueToSpell(8326);                            // SPELL_AURA_GHOST
 
-    SetMovement(MOVE_LAND_WALK);
-    SetMovement(MOVE_UNROOT);
+    SetWaterWalk(false);
+    SetRoot(false);
 
     m_deathTimer = 0;
 
@@ -4507,7 +4514,7 @@ void Player::ResurrectPlayer(float restore_percent, bool applySickness)
 
 void Player::KillPlayer()
 {
-    SetMovement(MOVE_ROOT);
+    SetRoot(true);
 
     StopMirrorTimers();                                     // disable timers(bars)
 
@@ -6733,9 +6740,11 @@ void Player::UpdateArea(uint32 newArea)
     UpdateAreaDependentAuras();
 }
 
-bool Player::CanUseOutdoorCapturePoint()
+bool Player::CanUseCapturePoint()
 {
-    return CanUseCapturePoint() &&
+    return isAlive() &&                                     // living
+           !HasStealthAura() &&                             // not stealthed
+           !HasInvisibilityAura() &&                        // visible
            (IsPvP() || sWorld.IsPvPRealm()) &&
            !HasMovementFlag(MOVEFLAG_FLYING) &&
            !IsTaxiFlying() &&
@@ -6750,6 +6759,10 @@ void Player::UpdateZone(uint32 newZone, uint32 newArea)
 
     if (m_zoneUpdateId != newZone)
     {
+        // handle outdoor pvp zones
+        sOutdoorPvPMgr.HandlePlayerLeaveZone(this, m_zoneUpdateId);
+        sOutdoorPvPMgr.HandlePlayerEnterZone(this, newZone);
+
         SendInitWorldStates(newZone, newArea);              // only if really enters to new zone, not just area change, works strange...
 
         if (sWorld.getConfig(CONFIG_BOOL_WEATHER))
@@ -7666,11 +7679,10 @@ void Player::CastItemCombatSpell(Unit* Target, WeaponAttackType attType)
         if (!pEnchant) continue;
         for (int s = 0; s < 3; ++s)
         {
-            uint32 proc_spell_id = pEnchant->spellid[s];
-
             if (pEnchant->type[s] != ITEM_ENCHANTMENT_TYPE_COMBAT_SPELL)
                 continue;
 
+            uint32 proc_spell_id = pEnchant->spellid[s];
             SpellEntry const* spellInfo = sSpellStore.LookupEntry(proc_spell_id);
             if (!spellInfo)
             {
@@ -8518,121 +8530,166 @@ static WorldStatePair AB_world_states[] =
 
 static WorldStatePair EY_world_states[] =
 {
-    { 0xac1, 0x0 },                                         // 2753  7 Horde Bases
-    { 0xac0, 0x0 },                                         // 2752  8 Alliance Bases
-    { 0xab6, 0x0 },                                         // 2742  9 Mage Tower - Horde conflict
-    { 0xab5, 0x0 },                                         // 2741 10 Mage Tower - Alliance conflict
-    { 0xab4, 0x0 },                                         // 2740 11 Fel Reaver - Horde conflict
-    { 0xab3, 0x0 },                                         // 2739 12 Fel Reaver - Alliance conflict
-    { 0xab2, 0x0 },                                         // 2738 13 Draenei - Alliance conflict
-    { 0xab1, 0x0 },                                         // 2737 14 Draenei - Horde conflict
-    { 0xab0, 0x0 },                                         // 2736 15 unk // 0 at start
-    { 0xaaf, 0x0 },                                         // 2735 16 unk // 0 at start
-    { 0xaad, 0x0 },                                         // 2733 17 Draenei - Horde control
-    { 0xaac, 0x0 },                                         // 2732 18 Draenei - Alliance control
-    { 0xaab, 0x1 },                                         // 2731 19 Draenei uncontrolled (1 - yes, 0 - no)
-    { 0xaaa, 0x0 },                                         // 2730 20 Mage Tower - Alliance control
-    { 0xaa9, 0x0 },                                         // 2729 21 Mage Tower - Horde control
-    { 0xaa8, 0x1 },                                         // 2728 22 Mage Tower uncontrolled (1 - yes, 0 - no)
-    { 0xaa7, 0x0 },                                         // 2727 23 Fel Reaver - Horde control
-    { 0xaa6, 0x0 },                                         // 2726 24 Fel Reaver - Alliance control
-    { 0xaa5, 0x1 },                                         // 2725 25 Fel Reaver uncontrolled (1 - yes, 0 - no)
-    { 0xaa4, 0x0 },                                         // 2724 26 Boold Elf - Horde control
-    { 0xaa3, 0x0 },                                         // 2723 27 Boold Elf - Alliance control
-    { 0xaa2, 0x1 },                                         // 2722 28 Boold Elf uncontrolled (1 - yes, 0 - no)
-    { 0xac5, 0x1 },                                         // 2757 29 Flag (1 - show, 0 - hide) - doesn't work exactly this way!
-    { 0xad2, 0x1 },                                         // 2770 30 Horde top-stats (1 - show, 0 - hide) // 02 -> horde picked up the flag
-    { 0xad1, 0x1 },                                         // 2769 31 Alliance top-stats (1 - show, 0 - hide) // 02 -> alliance picked up the flag
-    { 0xabe, 0x0 },                                         // 2750 32 Horde resources
-    { 0xabd, 0x0 },                                         // 2749 33 Alliance resources
-    { 0xa05, 0x8e },                                        // 2565 34 unk, constant?
-    { 0xaa0, 0x0 },                                         // 2720 35 Capturing progress-bar (100 -> empty (only grey), 0 -> blue|red (no grey), default 0)
-    { 0xa9f, 0x0 },                                         // 2719 36 Capturing progress-bar (0 - left, 100 - right)
-    { 0xa9e, 0x0 },                                         // 2718 37 Capturing progress-bar (1 - show, 0 - hide)
-    { 0xc0d, 0x17b },                                       // 3085 38 unk
-    // and some more ... unknown
-    { 0x0,   0x0 }
+    { 2753, 0 },                                            // WORLD_STATE_EY_TOWER_COUNT_HORDE
+    { 2752, 0 },                                            // WORLD_STATE_EY_TOWER_COUNT_ALLIANCE
+    { 2733, WORLD_STATE_REMOVE },                           // WORLD_STATE_EY_DRAENEI_RUINS_HORDE
+    { 2732, WORLD_STATE_REMOVE },                           // WORLD_STATE_EY_DRAENEI_RUINS_ALLIANCE
+    { 2731, WORLD_STATE_REMOVE },                           // WORLD_STATE_EY_DRAENEI_RUINS_NEUTRAL
+    { 2730, WORLD_STATE_REMOVE },                           // WORLD_STATE_EY_MAGE_TOWER_ALLIANCE
+    { 2729, WORLD_STATE_REMOVE },                           // WORLD_STATE_EY_MAGE_TOWER_HORDE
+    { 2728, WORLD_STATE_REMOVE },                           // WORLD_STATE_EY_MAGE_TOWER_NEUTRAL
+    { 2727, WORLD_STATE_REMOVE },                           // WORLD_STATE_EY_FEL_REAVER_HORDE
+    { 2726, WORLD_STATE_REMOVE },                           // WORLD_STATE_EY_FEL_REAVER_ALLIANCE
+    { 2725, WORLD_STATE_REMOVE },                           // WORLD_STATE_EY_FEL_REAVER_NEUTRAL
+    { 2724, WORLD_STATE_REMOVE },                           // WORLD_STATE_EY_BLOOD_ELF_HORDE
+    { 2723, WORLD_STATE_REMOVE },                           // WORLD_STATE_EY_BLOOD_ELF_ALLIANCE
+    { 2722, WORLD_STATE_REMOVE },                           // WORLD_STATE_EY_BLOOD_ELF_NEUTRAL
+    { 2757, WORLD_STATE_REMOVE },                           // WORLD_STATE_EY_NETHERSTORM_FLAG_READY
+    { 2770, 1 },                                            // WORLD_STATE_EY_NETHERSTORM_FLAG_STATE_HORDE
+    { 2769, 1 },                                            // WORLD_STATE_EY_NETHERSTORM_FLAG_STATE_ALLIANCE
+    { 2750, 0 },                                            // WORLD_STATE_EY_RESOURCES_HORDE
+    { 2749, 0 },                                            // WORLD_STATE_EY_RESOURCES_ALLIANCE
+    { 2565, 0x8e },                                         // global unk -- TODO: move to global world state
+    { 3085, 0x17b }                                         // global unk -- TODO: move to global world state
+};
+
+static WorldStatePair SI_world_states[] =                   // Silithus
+{
+    { 2313, 0 },                                            // WORLD_STATE_SI_GATHERED_A
+    { 2314, 0 },                                            // WORLD_STATE_SI_GATHERED_H
+    { 2317, 0 }                                             // WORLD_STATE_SI_SILITHYST_MAX
+};
+
+static WorldStatePair EP_world_states[] =                   // Eastern Plaguelands
+{
+    { 2327, 0 },                                            // WORLD_STATE_EP_TOWER_COUNT_ALLIANCE
+    { 2328, 0 },                                            // WORLD_STATE_EP_TOWER_COUNT_HORDE
+    { 2355, WORLD_STATE_REMOVE },                           // WORLD_STATE_EP_CROWNGUARD_NEUTRAL
+    { 2374, WORLD_STATE_REMOVE },                           // WORLD_STATE_EP_CROWNGUARD_CONTEST_ALLIANCE
+    { 2375, WORLD_STATE_REMOVE },                           // WORLD_STATE_EP_CROWNGUARD_CONTEST_HORDE
+    { 2376, WORLD_STATE_REMOVE },                           // WORLD_STATE_EP_CROWNGUARD_PROGRESS_ALLIANCE
+    { 2377, WORLD_STATE_REMOVE },                           // WORLD_STATE_EP_CROWNGUARD_PROGRESS_HORDE
+    { 2378, WORLD_STATE_REMOVE },                           // WORLD_STATE_EP_CROWNGUARD_ALLIANCE
+    { 2379, WORLD_STATE_REMOVE },                           // WORLD_STATE_EP_CROWNGUARD_HORDE
+    { 2354, WORLD_STATE_REMOVE },                           // WORLD_STATE_EP_EASTWALL_ALLIANCE
+    { 2356, WORLD_STATE_REMOVE },                           // WORLD_STATE_EP_EASTWALL_HORDE
+    { 2357, WORLD_STATE_REMOVE },                           // WORLD_STATE_EP_EASTWALL_PROGRESS_ALLIANCE
+    { 2358, WORLD_STATE_REMOVE },                           // WORLD_STATE_EP_EASTWALL_PROGRESS_HORDE
+    { 2359, WORLD_STATE_REMOVE },                           // WORLD_STATE_EP_EASTWALL_CONTEST_ALLIANCE
+    { 2360, WORLD_STATE_REMOVE },                           // WORLD_STATE_EP_EASTWALL_CONTEST_HORDE
+    { 2361, WORLD_STATE_REMOVE },                           // WORLD_STATE_EP_EASTWALL_NEUTRAL
+    { 2352, WORLD_STATE_REMOVE },                           // WORLD_STATE_EP_NORTHPASS_NEUTRAL
+    { 2362, WORLD_STATE_REMOVE },                           // WORLD_STATE_EP_NORTHPASS_CONTEST_ALLIANCE
+    { 2363, WORLD_STATE_REMOVE },                           // WORLD_STATE_EP_NORTHPASS_CONTEST_HORDE
+    { 2364, WORLD_STATE_REMOVE },                           // WORLD_STATE_EP_NORTHPASS_PROGRESS_ALLIANCE
+    { 2365, WORLD_STATE_REMOVE },                           // WORLD_STATE_EP_NORTHPASS_PROGRESS_HORDE
+    { 2372, WORLD_STATE_REMOVE },                           // WORLD_STATE_EP_NORTHPASS_ALLIANCE
+    { 2373, WORLD_STATE_REMOVE },                           // WORLD_STATE_EP_NORTHPASS_HORDE
+    { 2353, WORLD_STATE_REMOVE },                           // WORLD_STATE_EP_PLAGUEWOOD_NEUTRAL
+    { 2366, WORLD_STATE_REMOVE },                           // WORLD_STATE_EP_PLAGUEWOOD_CONTEST_ALLIANCE
+    { 2367, WORLD_STATE_REMOVE },                           // WORLD_STATE_EP_PLAGUEWOOD_CONTEST_HORDE - not in dbc! sent for consistency's sake, and to match field count
+    { 2368, WORLD_STATE_REMOVE },                           // WORLD_STATE_EP_PLAGUEWOOD_PROGRESS_ALLIANCE
+    { 2369, WORLD_STATE_REMOVE },                           // WORLD_STATE_EP_PLAGUEWOOD_PROGRESS_HORDE
+    { 2370, WORLD_STATE_REMOVE },                           // WORLD_STATE_EP_PLAGUEWOOD_ALLIANCE
+    { 2371, WORLD_STATE_REMOVE }                            // WORLD_STATE_EP_PLAGUEWOOD_HORDE
 };
 
 static WorldStatePair HP_world_states[] =                   // Hellfire Peninsula
 {
-    { 0x9ba, 0x1 },                                         // 2490 10
-    { 0x9b9, 0x1 },                                         // 2489 11
-    { 0x9b5, 0x0 },                                         // 2485 12
-    { 0x9b4, 0x1 },                                         // 2484 13
-    { 0x9b3, 0x0 },                                         // 2483 14
-    { 0x9b2, 0x0 },                                         // 2482 15
-    { 0x9b1, 0x1 },                                         // 2481 16
-    { 0x9b0, 0x0 },                                         // 2480 17
-    { 0x9ae, 0x0 },                                         // 2478 18 horde pvp objectives captured
-    { 0x9ac, 0x0 },                                         // 2476 19
-    { 0x9a8, 0x0 },                                         // 2472 20
-    { 0x9a7, 0x0 },                                         // 2471 21
-    { 0x9a6, 0x1 },                                         // 2470 22
-    { 0x0,   0x0 }
+    { 2490, WORLD_STATE_REMOVE },                           // WORLD_STATE_HP_TOWER_DISPLAY_A
+    { 2489, WORLD_STATE_REMOVE },                           // WORLD_STATE_HP_TOWER_DISPLAY_H
+    { 2485, WORLD_STATE_REMOVE },                           // WORLD_STATE_HP_BROKEN_HILL_NEUTRAL
+    { 2484, WORLD_STATE_REMOVE },                           // WORLD_STATE_HP_BROKEN_HILL_HORDE
+    { 2483, WORLD_STATE_REMOVE },                           // WORLD_STATE_HP_BROKEN_HILL_ALLIANCE
+    { 2482, WORLD_STATE_REMOVE },                           // WORLD_STATE_HP_OVERLOOK_NEUTRAL
+    { 2481, WORLD_STATE_REMOVE },                           // WORLD_STATE_HP_OVERLOOK_HORDE
+    { 2480, WORLD_STATE_REMOVE },                           // WORLD_STATE_HP_OVERLOOK_ALLIANCE
+    { 2478, 0 },                                            // WORLD_STATE_HP_TOWER_COUNT_HORDE
+    { 2476, 0 },                                            // WORLD_STATE_HP_TOWER_COUNT_ALLIANCE
+    { 2472, WORLD_STATE_REMOVE },                           // WORLD_STATE_HP_STADIUM_NEUTRAL
+    { 2471, WORLD_STATE_REMOVE },                           // WORLD_STATE_HP_STADIUM_ALLIANCE
+    { 2470, WORLD_STATE_REMOVE }                            // WORLD_STATE_HP_STADIUM_HORDE
 };
 
 static WorldStatePair TF_world_states[] =                   // Terokkar Forest
 {
-    { 0xa41, 0x0 },                                         // 2625 10
-    { 0xa40, 0x14 },                                        // 2624 11
-    { 0xa3f, 0x0 },                                         // 2623 12
-    { 0xa3e, 0x0 },                                         // 2622 13
-    { 0xa3d, 0x5 },                                         // 2621 14
-    { 0xa3c, 0x0 },                                         // 2620 15
-    { 0xa87, 0x0 },                                         // 2695 16
-    { 0xa86, 0x0 },                                         // 2694 17
-    { 0xa85, 0x0 },                                         // 2693 18
-    { 0xa84, 0x0 },                                         // 2692 19
-    { 0xa83, 0x0 },                                         // 2691 20
-    { 0xa82, 0x0 },                                         // 2690 21
-    { 0xa81, 0x0 },                                         // 2689 22
-    { 0xa80, 0x0 },                                         // 2688 23
-    { 0xa7e, 0x0 },                                         // 2686 24
-    { 0xa7d, 0x0 },                                         // 2685 25
-    { 0xa7c, 0x0 },                                         // 2684 26
-    { 0xa7b, 0x0 },                                         // 2683 27
-    { 0xa7a, 0x0 },                                         // 2682 28
-    { 0xa79, 0x0 },                                         // 2681 29
-    { 0x9d0, 0x5 },                                         // 2512 30
-    { 0x9ce, 0x0 },                                         // 2510 31
-    { 0x9cd, 0x0 },                                         // 2509 32
-    { 0x9cc, 0x0 },                                         // 2508 33
-    { 0xa88, 0x0 },                                         // 2696 34
-    { 0xad0, 0x0 },                                         // 2768 35
-    { 0xacf, 0x1 },                                         // 2767 36
-    { 0x0,   0x0 }
+    { 2622, 0 },                                            // WORLD_STATE_TF_TOWER_COUNT_H
+    { 2621, 0 },                                            // WORLD_STATE_TF_TOWER_COUNT_A
+    { 2620, WORLD_STATE_REMOVE },                           // WORLD_STATE_TF_TOWERS_CONTROLLED
+    { 2695, WORLD_STATE_REMOVE },                           // WORLD_STATE_TF_SOUTH_EAST_TOWER_HORDE
+    { 2694, WORLD_STATE_REMOVE },                           // WORLD_STATE_TF_SOUTH_EAST_TOWER_ALLIANCE
+    { 2693, WORLD_STATE_REMOVE },                           // WORLD_STATE_TF_SOUTH_TOWER_NEUTRAL
+    { 2692, WORLD_STATE_REMOVE },                           // WORLD_STATE_TF_SOUTH_TOWER_HORDE
+    { 2691, WORLD_STATE_REMOVE },                           // WORLD_STATE_TF_SOUTH_TOWER_ALLIANCE
+    { 2690, WORLD_STATE_REMOVE },                           // WORLD_STATE_TF_EAST_TOWER_NEUTRAL
+    { 2689, WORLD_STATE_REMOVE },                           // WORLD_STATE_TF_EAST_TOWER_HORDE
+    { 2688, WORLD_STATE_REMOVE },                           // WORLD_STATE_TF_EAST_TOWER_ALLIANCE
+    { 2686, WORLD_STATE_REMOVE },                           // WORLD_STATE_TF_NORTH_TOWER_NEUTRAL
+    { 2685, WORLD_STATE_REMOVE },                           // WORLD_STATE_TF_NORTH_TOWER_HORDE
+    { 2684, WORLD_STATE_REMOVE },                           // WORLD_STATE_TF_NORTH_TOWER_ALLIANCE
+    { 2683, WORLD_STATE_REMOVE },                           // WORLD_STATE_TF_WEST_TOWER_ALLIANCE
+    { 2682, WORLD_STATE_REMOVE },                           // WORLD_STATE_TF_WEST_TOWER_HORDE
+    { 2681, WORLD_STATE_REMOVE },                           // WORLD_STATE_TF_WEST_TOWER_NEUTRAL
+    { 2512, 0 },                                            // WORLD_STATE_TF_TIME_MIN_FIRST_DIGIT
+    { 2510, 0 },                                            // WORLD_STATE_TF_TIME_MIN_SECOND_DIGIT
+    { 2509, 0 },                                            // WORLD_STATE_TF_TIME_HOURS
+    { 2508, WORLD_STATE_REMOVE },                           // WORLD_STATE_TF_LOCKED_NEUTRAL
+    { 2696, WORLD_STATE_REMOVE },                           // WORLD_STATE_TF_SOUTH_EAST_TOWER_NEUTRAL
+    { 2768, WORLD_STATE_REMOVE },                           // WORLD_STATE_TF_LOCKED_HORDE
+    { 2767, WORLD_STATE_REMOVE }                            // WORLD_STATE_TF_LOCKED_ALLIANCE
 };
 
 static WorldStatePair ZM_world_states[] =                   // Zangarmarsh
 {
-    { 0x9e1, 0x0 },                                         // 2529 10
-    { 0x9e0, 0x0 },                                         // 2528 11
-    { 0x9df, 0x0 },                                         // 2527 12
-    { 0xa5d, 0x1 },                                         // 2526 13
-    { 0xa5c, 0x0 },                                         // 2525 14
-    { 0xa5b, 0x1 },                                         // 2524 15
-    { 0xa5a, 0x0 },                                         // 2523 16
-    { 0xa59, 0x1 },                                         // 2649 17
-    { 0xa58, 0x0 },                                         // 2648 18
-    { 0xa57, 0x0 },                                         // 2647 19
-    { 0xa56, 0x0 },                                         // 2646 20
-    { 0xa55, 0x1 },                                         // 2645 21
-    { 0xa54, 0x0 },                                         // 2644 22
-    { 0x9e7, 0x0 },                                         // 2535 23
-    { 0x9e6, 0x0 },                                         // 2534 24
-    { 0x9e5, 0x0 },                                         // 2533 25
-    { 0xa00, 0x0 },                                         // 2560 26
-    { 0x9ff, 0x1 },                                         // 2559 27
-    { 0x9fe, 0x0 },                                         // 2558 28
-    { 0x9fd, 0x0 },                                         // 2557 29
-    { 0x9fc, 0x1 },                                         // 2556 30
-    { 0x9fb, 0x0 },                                         // 2555 31
-    { 0xa62, 0x0 },                                         // 2658 32
-    { 0xa61, 0x1 },                                         // 2657 33
-    { 0xa60, 0x1 },                                         // 2656 34
-    { 0xa5f, 0x0 },                                         // 2655 35
-    { 0x0,   0x0 }
+    { 2653, 0x1 },                                          // WORLD_STATE_ZM_UNK
+    { 2652, WORLD_STATE_REMOVE },                           // WORLD_STATE_ZM_BEACON_EAST_NEUTRAL
+    { 2651, WORLD_STATE_REMOVE },                           // WORLD_STATE_ZM_BEACON_EAST_HORDE
+    { 2650, WORLD_STATE_REMOVE },                           // WORLD_STATE_ZM_BEACON_EAST_ALLIANCE
+    { 2649, WORLD_STATE_REMOVE },                           // WORLD_STATE_ZM_GRAVEYARD_HORDE
+    { 2648, WORLD_STATE_REMOVE },                           // WORLD_STATE_ZM_GRAVEYARD_ALLIANCE
+    { 2647, WORLD_STATE_REMOVE },                           // WORLD_STATE_ZM_GRAVEYARD_NEUTRAL
+    { 2646, WORLD_STATE_REMOVE },                           // WORLD_STATE_ZM_BEACON_WEST_NEUTRAL
+    { 2645, WORLD_STATE_REMOVE },                           // WORLD_STATE_ZM_BEACON_WEST_HORDE
+    { 2644, WORLD_STATE_REMOVE },                           // WORLD_STATE_ZM_BEACON_WEST_ALLIANCE
+    { 2560, WORLD_STATE_REMOVE },                           // WORLD_STATE_ZM_BEACON_EAST_UI_NEUTRAL
+    { 2559, WORLD_STATE_REMOVE },                           // WORLD_STATE_ZM_BEACON_EAST_UI_HORDE
+    { 2558, WORLD_STATE_REMOVE },                           // WORLD_STATE_ZM_BEACON_EAST_UI_ALLIANCE
+    { 2557, WORLD_STATE_REMOVE },                           // WORLD_STATE_ZM_BEACON_WEST_UI_NEUTRAL
+    { 2556, WORLD_STATE_REMOVE },                           // WORLD_STATE_ZM_BEACON_WEST_UI_HORDE
+    { 2555, WORLD_STATE_REMOVE },                           // WORLD_STATE_ZM_BEACON_WEST_UI_ALLIANCE
+    { 2658, WORLD_STATE_REMOVE },                           // WORLD_STATE_ZM_FLAG_READY_HORDE
+    { 2657, WORLD_STATE_REMOVE },                           // WORLD_STATE_ZM_FLAG_NOT_READY_HORDE
+    { 2656, WORLD_STATE_REMOVE },                           // WORLD_STATE_ZM_FLAG_NOT_READY_ALLIANCE
+    { 2655, WORLD_STATE_REMOVE }                            // WORLD_STATE_ZM_FLAG_READY_ALLIANCE
+};
+
+static WorldStatePair NA_world_states[] =
+{
+    { 2503, 0 },                                            // WORLD_STATE_NA_GUARDS_HORDE
+    { 2502, 0 },                                            // WORLD_STATE_NA_GUARDS_ALLIANCE
+    { 2493, 0 },                                            // WORLD_STATE_NA_GUARDS_MAX
+    { 2491, 0 },                                            // WORLD_STATE_NA_GUARDS_LEFT
+    { 2762, WORLD_STATE_REMOVE },                           // WORLD_STATE_NA_WYVERN_NORTH_NEUTRAL_H
+    { 2662, WORLD_STATE_REMOVE },                           // WORLD_STATE_NA_WYVERN_NORTH_NEUTRAL_A
+    { 2663, WORLD_STATE_REMOVE },                           // WORLD_STATE_NA_WYVERN_NORTH_H
+    { 2664, WORLD_STATE_REMOVE },                           // WORLD_STATE_NA_WYVERN_NORTH_A
+    { 2760, WORLD_STATE_REMOVE },                           // WORLD_STATE_NA_WYVERN_SOUTH_NEUTRAL_H
+    { 2670, WORLD_STATE_REMOVE },                           // WORLD_STATE_NA_WYVERN_SOUTH_NEUTRAL_A
+    { 2668, WORLD_STATE_REMOVE },                           // WORLD_STATE_NA_WYVERN_SOUTH_H
+    { 2669, WORLD_STATE_REMOVE },                           // WORLD_STATE_NA_WYVERN_SOUTH_A
+    { 2761, WORLD_STATE_REMOVE },                           // WORLD_STATE_NA_WYVERN_WEST_NEUTRAL_H
+    { 2667, WORLD_STATE_REMOVE },                           // WORLD_STATE_NA_WYVERN_WEST_NEUTRAL_A
+    { 2665, WORLD_STATE_REMOVE },                           // WORLD_STATE_NA_WYVERN_WEST_H
+    { 2666, WORLD_STATE_REMOVE },                           // WORLD_STATE_NA_WYVERN_WEST_A
+    { 2763, WORLD_STATE_REMOVE },                           // WORLD_STATE_NA_WYVERN_EAST_NEUTRAL_H
+    { 2659, WORLD_STATE_REMOVE },                           // WORLD_STATE_NA_WYVERN_EAST_NEUTRAL_A
+    { 2660, WORLD_STATE_REMOVE },                           // WORLD_STATE_NA_WYVERN_EAST_H
+    { 2661, WORLD_STATE_REMOVE },                           // WORLD_STATE_NA_WYVERN_EAST_A
+    { 2671, WORLD_STATE_REMOVE },                           // WORLD_STATE_NA_HALAA_NEUTRAL
+    { 2676, WORLD_STATE_REMOVE },                           // WORLD_STATE_NA_HALAA_NEUTRAL_A
+    { 2677, WORLD_STATE_REMOVE },                           // WORLD_STATE_NA_HALAA_NEUTRAL_H
+    { 2672, WORLD_STATE_REMOVE },                           // WORLD_STATE_NA_HALAA_HORDE
+    { 2673, WORLD_STATE_REMOVE }                            // WORLD_STATE_NA_HALAA_ALLIANCE
 };
 
 void Player::SendInitWorldStates(uint32 zoneid, uint32 areaid)
@@ -8673,17 +8730,31 @@ void Player::SendInitWorldStates(uint32 zoneid, uint32 areaid)
         FillInitialWorldState(data, count, 0x9bd, 0xF);     // 2493
         FillInitialWorldState(data, count, 0x9bb, 0xF);     // 2491
     }
+
     switch (zoneid)
     {
-        case 1:
-        case 11:
-        case 12:
-        case 38:
-        case 40:
-        case 51:
-        case 1519:
-        case 1537:
-        case 2257:
+        case 1:                                             // Dun Morogh
+        case 11:                                            // Wetlands
+        case 12:                                            // Elwynn Forest
+        case 38:                                            // Loch Modan
+        case 40:                                            // Westfall
+        case 51:                                            // Searing Gorge
+        case 1519:                                          // Stormwind City
+        case 1537:                                          // Ironforge
+        case 2257:                                          // Deeprun Tram
+        case 3703:                                          // Shattrath City
+            break;
+        case 139:                                           // Eastern Plaguelands
+            if (OutdoorPvP* outdoorPvP = sOutdoorPvPMgr.GetScript(zoneid))
+                outdoorPvP->FillInitialWorldStates(data, count);
+            else
+                FillInitialWorldState(data, count, EP_world_states);
+            break;
+        case 1377:                                          // Silithus
+            if (OutdoorPvP* outdoorPvP = sOutdoorPvPMgr.GetScript(zoneid))
+                outdoorPvP->FillInitialWorldStates(data, count);
+            else
+                FillInitialWorldState(data, count, SI_world_states);
             break;
         case 2597:                                          // AV
             if (bg && bg->GetTypeID() == BATTLEGROUND_AV)
@@ -8710,13 +8781,28 @@ void Player::SendInitWorldStates(uint32 zoneid, uint32 areaid)
                 FillInitialWorldState(data, count, EY_world_states);
             break;
         case 3483:                                          // Hellfire Peninsula
-            FillInitialWorldState(data, count, HP_world_states);
+            if (OutdoorPvP* outdoorPvP = sOutdoorPvPMgr.GetScript(zoneid))
+                outdoorPvP->FillInitialWorldStates(data, count);
+            else
+                FillInitialWorldState(data, count, HP_world_states);
+            break;
+        case 3518:                                          // Nagrand
+            if (OutdoorPvP* outdoorPvP = sOutdoorPvPMgr.GetScript(zoneid))
+                outdoorPvP->FillInitialWorldStates(data, count);
+            else
+                FillInitialWorldState(data, count, NA_world_states);
             break;
         case 3519:                                          // Terokkar Forest
-            FillInitialWorldState(data, count, TF_world_states);
+            if (OutdoorPvP* outdoorPvP = sOutdoorPvPMgr.GetScript(zoneid))
+                outdoorPvP->FillInitialWorldStates(data, count);
+            else
+                FillInitialWorldState(data, count, TF_world_states);
             break;
         case 3521:                                          // Zangarmarsh
-            FillInitialWorldState(data, count, ZM_world_states);
+            if (OutdoorPvP* outdoorPvP = sOutdoorPvPMgr.GetScript(zoneid))
+                outdoorPvP->FillInitialWorldStates(data, count);
+            else
+                FillInitialWorldState(data, count, ZM_world_states);
             break;
         case 3698:                                          // Nagrand Arena
             if (bg && bg->GetTypeID() == BATTLEGROUND_NA)
@@ -8747,8 +8833,6 @@ void Player::SendInitWorldStates(uint32 zoneid, uint32 areaid)
                 FillInitialWorldState(data, count, 0xbb9, 0x0); // 3001 8 green
                 FillInitialWorldState(data, count, 0xbba, 0x0); // 3002 9 show
             }
-            break;
-        case 3703:                                          // Shattrath City
             break;
         default:
             FillInitialWorldState(data, count, 0x914, 0x0); // 2324 7
@@ -10652,7 +10736,7 @@ InventoryResult Player::CanEquipItem(uint8 slot, uint16& dest, Item* pItem, bool
                 return EQUIP_ERR_NO_EQUIPMENT_SLOT_AVAILABLE;
 
             // if swap ignore item (equipped also)
-            if (InventoryResult res2 = CanEquipUniqueItem(pItem, swap ? eslot : NULL_SLOT))
+            if (InventoryResult res2 = CanEquipUniqueItem(pItem, swap ? eslot : uint8(NULL_SLOT)))
                 return res2;
 
             // check unique-equipped special item classes
@@ -12675,7 +12759,7 @@ void Player::ApplyEnchantment(Item* item, EnchantmentSlot slot, bool apply, bool
     if (!pEnchant)
         return;
 
-    if (!ignore_condition && pEnchant->EnchantmentCondition && !((Player*)this)->EnchantmentFitsRequirements(pEnchant->EnchantmentCondition, -1))
+    if (!ignore_condition && pEnchant->EnchantmentCondition && !EnchantmentFitsRequirements(pEnchant->EnchantmentCondition, -1))
         return;
 
     if (!item->IsBroken())
@@ -12725,7 +12809,7 @@ void Player::ApplyEnchantment(Item* item, EnchantmentSlot slot, bool apply, bool
                                     }
                                 }
                             }
-                            // Cast custom spell vs all equal basepoints getted from enchant_amount
+                            // Cast custom spell vs all equal basepoints got from enchant_amount
                             if (basepoints)
                                 CastCustomSpell(this, enchant_spell_id, &basepoints, &basepoints, &basepoints, true, item);
                             else
@@ -12810,111 +12894,111 @@ void Player::ApplyEnchantment(Item* item, EnchantmentSlot slot, bool apply, bool
                             ApplyStatBuffMod(STAT_STAMINA, float(enchant_amount), apply);
                             break;
                         case ITEM_MOD_DEFENSE_SKILL_RATING:
-                            ((Player*)this)->ApplyRatingMod(CR_DEFENSE_SKILL, enchant_amount, apply);
+                            ApplyRatingMod(CR_DEFENSE_SKILL, enchant_amount, apply);
                             DEBUG_LOG("+ %u DEFENCE", enchant_amount);
                             break;
                         case  ITEM_MOD_DODGE_RATING:
-                            ((Player*)this)->ApplyRatingMod(CR_DODGE, enchant_amount, apply);
+                            ApplyRatingMod(CR_DODGE, enchant_amount, apply);
                             DEBUG_LOG("+ %u DODGE", enchant_amount);
                             break;
                         case ITEM_MOD_PARRY_RATING:
-                            ((Player*)this)->ApplyRatingMod(CR_PARRY, enchant_amount, apply);
+                            ApplyRatingMod(CR_PARRY, enchant_amount, apply);
                             DEBUG_LOG("+ %u PARRY", enchant_amount);
                             break;
                         case ITEM_MOD_BLOCK_RATING:
-                            ((Player*)this)->ApplyRatingMod(CR_BLOCK, enchant_amount, apply);
+                            ApplyRatingMod(CR_BLOCK, enchant_amount, apply);
                             DEBUG_LOG("+ %u SHIELD_BLOCK", enchant_amount);
                             break;
                         case ITEM_MOD_HIT_MELEE_RATING:
-                            ((Player*)this)->ApplyRatingMod(CR_HIT_MELEE, enchant_amount, apply);
+                            ApplyRatingMod(CR_HIT_MELEE, enchant_amount, apply);
                             DEBUG_LOG("+ %u MELEE_HIT", enchant_amount);
                             break;
                         case ITEM_MOD_HIT_RANGED_RATING:
-                            ((Player*)this)->ApplyRatingMod(CR_HIT_RANGED, enchant_amount, apply);
+                            ApplyRatingMod(CR_HIT_RANGED, enchant_amount, apply);
                             DEBUG_LOG("+ %u RANGED_HIT", enchant_amount);
                             break;
                         case ITEM_MOD_HIT_SPELL_RATING:
-                            ((Player*)this)->ApplyRatingMod(CR_HIT_SPELL, enchant_amount, apply);
+                            ApplyRatingMod(CR_HIT_SPELL, enchant_amount, apply);
                             DEBUG_LOG("+ %u SPELL_HIT", enchant_amount);
                             break;
                         case ITEM_MOD_CRIT_MELEE_RATING:
-                            ((Player*)this)->ApplyRatingMod(CR_CRIT_MELEE, enchant_amount, apply);
+                            ApplyRatingMod(CR_CRIT_MELEE, enchant_amount, apply);
                             DEBUG_LOG("+ %u MELEE_CRIT", enchant_amount);
                             break;
                         case ITEM_MOD_CRIT_RANGED_RATING:
-                            ((Player*)this)->ApplyRatingMod(CR_CRIT_RANGED, enchant_amount, apply);
+                            ApplyRatingMod(CR_CRIT_RANGED, enchant_amount, apply);
                             DEBUG_LOG("+ %u RANGED_CRIT", enchant_amount);
                             break;
                         case ITEM_MOD_CRIT_SPELL_RATING:
-                            ((Player*)this)->ApplyRatingMod(CR_CRIT_SPELL, enchant_amount, apply);
+                            ApplyRatingMod(CR_CRIT_SPELL, enchant_amount, apply);
                             DEBUG_LOG("+ %u SPELL_CRIT", enchant_amount);
                             break;
 //                        Values from ITEM_STAT_MELEE_HA_RATING to ITEM_MOD_HASTE_RANGED_RATING are never used
 //                        in Enchantments
 //                        case ITEM_MOD_HIT_TAKEN_MELEE_RATING:
-//                            ((Player*)this)->ApplyRatingMod(CR_HIT_TAKEN_MELEE, enchant_amount, apply);
+//                            ApplyRatingMod(CR_HIT_TAKEN_MELEE, enchant_amount, apply);
 //                            break;
 //                        case ITEM_MOD_HIT_TAKEN_RANGED_RATING:
-//                            ((Player*)this)->ApplyRatingMod(CR_HIT_TAKEN_RANGED, enchant_amount, apply);
+//                            ApplyRatingMod(CR_HIT_TAKEN_RANGED, enchant_amount, apply);
 //                            break;
 //                        case ITEM_MOD_HIT_TAKEN_SPELL_RATING:
-//                            ((Player*)this)->ApplyRatingMod(CR_HIT_TAKEN_SPELL, enchant_amount, apply);
+//                            ApplyRatingMod(CR_HIT_TAKEN_SPELL, enchant_amount, apply);
 //                            break;
 //                        case ITEM_MOD_CRIT_TAKEN_MELEE_RATING:
-//                            ((Player*)this)->ApplyRatingMod(CR_CRIT_TAKEN_MELEE, enchant_amount, apply);
+//                            ApplyRatingMod(CR_CRIT_TAKEN_MELEE, enchant_amount, apply);
 //                            break;
 //                        case ITEM_MOD_CRIT_TAKEN_RANGED_RATING:
-//                            ((Player*)this)->ApplyRatingMod(CR_CRIT_TAKEN_RANGED, enchant_amount, apply);
+//                            ApplyRatingMod(CR_CRIT_TAKEN_RANGED, enchant_amount, apply);
 //                            break;
 //                        case ITEM_MOD_CRIT_TAKEN_SPELL_RATING:
-//                            ((Player*)this)->ApplyRatingMod(CR_CRIT_TAKEN_SPELL, enchant_amount, apply);
+//                            ApplyRatingMod(CR_CRIT_TAKEN_SPELL, enchant_amount, apply);
 //                            break;
 //                        case ITEM_MOD_HASTE_MELEE_RATING:
-//                            ((Player*)this)->ApplyRatingMod(CR_HASTE_MELEE, enchant_amount, apply);
+//                            ApplyRatingMod(CR_HASTE_MELEE, enchant_amount, apply);
 //                            break;
 //                        case ITEM_MOD_HASTE_RANGED_RATING:
-//                            ((Player*)this)->ApplyRatingMod(CR_HASTE_RANGED, enchant_amount, apply);
+//                            ApplyRatingMod(CR_HASTE_RANGED, enchant_amount, apply);
 //                            break;
                         case ITEM_MOD_HASTE_SPELL_RATING:
-                            ((Player*)this)->ApplyRatingMod(CR_HASTE_SPELL, enchant_amount, apply);
+                            ApplyRatingMod(CR_HASTE_SPELL, enchant_amount, apply);
                             break;
                         case ITEM_MOD_HIT_RATING:
-                            ((Player*)this)->ApplyRatingMod(CR_HIT_MELEE, enchant_amount, apply);
-                            ((Player*)this)->ApplyRatingMod(CR_HIT_RANGED, enchant_amount, apply);
-                            ((Player*)this)->ApplyRatingMod(CR_HIT_SPELL, enchant_amount, apply);
+                            ApplyRatingMod(CR_HIT_MELEE, enchant_amount, apply);
+                            ApplyRatingMod(CR_HIT_RANGED, enchant_amount, apply);
+                            ApplyRatingMod(CR_HIT_SPELL, enchant_amount, apply);
                             DEBUG_LOG("+ %u HIT", enchant_amount);
                             break;
                         case ITEM_MOD_CRIT_RATING:
-                            ((Player*)this)->ApplyRatingMod(CR_CRIT_MELEE, enchant_amount, apply);
-                            ((Player*)this)->ApplyRatingMod(CR_CRIT_RANGED, enchant_amount, apply);
-                            ((Player*)this)->ApplyRatingMod(CR_CRIT_SPELL, enchant_amount, apply);
+                            ApplyRatingMod(CR_CRIT_MELEE, enchant_amount, apply);
+                            ApplyRatingMod(CR_CRIT_RANGED, enchant_amount, apply);
+                            ApplyRatingMod(CR_CRIT_SPELL, enchant_amount, apply);
                             DEBUG_LOG("+ %u CRITICAL", enchant_amount);
                             break;
 //                        Values ITEM_MOD_HIT_TAKEN_RATING and ITEM_MOD_CRIT_TAKEN_RATING are never used in Enchantment
 //                        case ITEM_MOD_HIT_TAKEN_RATING:
-//                            ((Player*)this)->ApplyRatingMod(CR_HIT_TAKEN_MELEE, enchant_amount, apply);
-//                            ((Player*)this)->ApplyRatingMod(CR_HIT_TAKEN_RANGED, enchant_amount, apply);
-//                            ((Player*)this)->ApplyRatingMod(CR_HIT_TAKEN_SPELL, enchant_amount, apply);
+//                            ApplyRatingMod(CR_HIT_TAKEN_MELEE, enchant_amount, apply);
+//                            ApplyRatingMod(CR_HIT_TAKEN_RANGED, enchant_amount, apply);
+//                            ApplyRatingMod(CR_HIT_TAKEN_SPELL, enchant_amount, apply);
 //                            break;
 //                        case ITEM_MOD_CRIT_TAKEN_RATING:
-//                            ((Player*)this)->ApplyRatingMod(CR_CRIT_TAKEN_MELEE, enchant_amount, apply);
-//                            ((Player*)this)->ApplyRatingMod(CR_CRIT_TAKEN_RANGED, enchant_amount, apply);
-//                            ((Player*)this)->ApplyRatingMod(CR_CRIT_TAKEN_SPELL, enchant_amount, apply);
+//                            ApplyRatingMod(CR_CRIT_TAKEN_MELEE, enchant_amount, apply);
+//                            ApplyRatingMod(CR_CRIT_TAKEN_RANGED, enchant_amount, apply);
+//                            ApplyRatingMod(CR_CRIT_TAKEN_SPELL, enchant_amount, apply);
 //                            break;
                         case ITEM_MOD_RESILIENCE_RATING:
-                            ((Player*)this)->ApplyRatingMod(CR_CRIT_TAKEN_MELEE, enchant_amount, apply);
-                            ((Player*)this)->ApplyRatingMod(CR_CRIT_TAKEN_RANGED, enchant_amount, apply);
-                            ((Player*)this)->ApplyRatingMod(CR_CRIT_TAKEN_SPELL, enchant_amount, apply);
+                            ApplyRatingMod(CR_CRIT_TAKEN_MELEE, enchant_amount, apply);
+                            ApplyRatingMod(CR_CRIT_TAKEN_RANGED, enchant_amount, apply);
+                            ApplyRatingMod(CR_CRIT_TAKEN_SPELL, enchant_amount, apply);
                             DEBUG_LOG("+ %u RESILIENCE", enchant_amount);
                             break;
                         case ITEM_MOD_HASTE_RATING:
-                            ((Player*)this)->ApplyRatingMod(CR_HASTE_MELEE, enchant_amount, apply);
-                            ((Player*)this)->ApplyRatingMod(CR_HASTE_RANGED, enchant_amount, apply);
-                            ((Player*)this)->ApplyRatingMod(CR_HASTE_SPELL, enchant_amount, apply);
+                            ApplyRatingMod(CR_HASTE_MELEE, enchant_amount, apply);
+                            ApplyRatingMod(CR_HASTE_RANGED, enchant_amount, apply);
+                            ApplyRatingMod(CR_HASTE_SPELL, enchant_amount, apply);
                             DEBUG_LOG("+ %u HASTE", enchant_amount);
                             break;
                         case ITEM_MOD_EXPERTISE_RATING:
-                            ((Player*)this)->ApplyRatingMod(CR_EXPERTISE, enchant_amount, apply);
+                            ApplyRatingMod(CR_EXPERTISE, enchant_amount, apply);
                             DEBUG_LOG("+ %u EXPERTISE", enchant_amount);
                             break;
                         case ITEM_MOD_ATTACK_POWER:
@@ -12927,15 +13011,15 @@ void Player::ApplyEnchantment(Item* item, EnchantmentSlot slot, bool apply, bool
                             DEBUG_LOG("+ %u RANGED_ATTACK_POWER", enchant_amount);
                             break;
                         case ITEM_MOD_MANA_REGENERATION:
-                            ((Player*)this)->ApplyManaRegenBonus(enchant_amount, apply);
+                            ApplyManaRegenBonus(enchant_amount, apply);
                             DEBUG_LOG("+ %u MANA_REGENERATION", enchant_amount);
                             break;
                         case ITEM_MOD_ARMOR_PENETRATION_RATING:
-                            ((Player*)this)->ApplyRatingMod(CR_ARMOR_PENETRATION, enchant_amount, apply);
+                            ApplyRatingMod(CR_ARMOR_PENETRATION, enchant_amount, apply);
                             DEBUG_LOG("+ %u ARMOR PENETRATION", enchant_amount);
                             break;
                         case ITEM_MOD_SPELL_POWER:
-                            ((Player*)this)->ApplySpellPowerBonus(enchant_amount, apply);
+                            ApplySpellPowerBonus(enchant_amount, apply);
                             DEBUG_LOG("+ %u SPELL_POWER", enchant_amount);
                             break;
                         case ITEM_MOD_BLOCK_VALUE:
@@ -13524,32 +13608,33 @@ uint32 Player::GetGossipTextId(uint32 menuId, WorldObject* pSource)
     if (!menuId)
         return textId;
 
-    GossipMenusMapBounds pMenuBounds = sObjectMgr.GetGossipMenusMapBounds(menuId);
+    uint32 scriptId = 0;
+    uint32 lastConditionId = 0;
 
+    GossipMenusMapBounds pMenuBounds = sObjectMgr.GetGossipMenusMapBounds(menuId);
     for (GossipMenusMap::const_iterator itr = pMenuBounds.first; itr != pMenuBounds.second; ++itr)
     {
-        if (itr->second.conditionId && sObjectMgr.IsPlayerMeetToNEWCondition(this, itr->second.conditionId))
+        // Take the text that has the highest conditionId of all fitting
+        // TODO: Simplify logic to (!itr->second.conditionId && !lastConditionId) || <lineBelow>)
+        if (itr->second.conditionId > lastConditionId && sObjectMgr.IsPlayerMeetToNEWCondition(this, itr->second.conditionId))
         {
+            lastConditionId = itr->second.conditionId;
             textId = itr->second.text_id;
-
-            // Start related script
-            if (itr->second.script_id)
-                GetMap()->ScriptsStart(sGossipScripts, itr->second.script_id, this, pSource);
-            break;
+            scriptId = itr->second.script_id;
         }
-        else if (!itr->second.conditionId)
+        else if (!itr->second.conditionId && !lastConditionId)
         {
             if (sObjectMgr.IsPlayerMeetToCondition(this, itr->second.cond_1) && sObjectMgr.IsPlayerMeetToCondition(this, itr->second.cond_2))
             {
                 textId = itr->second.text_id;
-
-                // Start related script
-                if (itr->second.script_id)
-                    GetMap()->ScriptsStart(sGossipScripts, itr->second.script_id, this, pSource);
-                break;
+                scriptId = itr->second.script_id;
             }
         }
     }
+
+    // Start related script
+    if (scriptId)
+        GetMap()->ScriptsStart(sGossipScripts, scriptId, this, pSource);
 
     return textId;
 }
@@ -14696,7 +14781,7 @@ bool Player::SatisfyQuestDay(Quest const* qInfo, bool msg) const
     return true;
 }
 
-bool Player::SatisfyQuestWeek(Quest const* qInfo, bool msg) const
+bool Player::SatisfyQuestWeek(Quest const* qInfo, bool /*msg*/) const
 {
     if (!qInfo->IsWeekly() || m_weeklyquests.empty())
         return true;
@@ -14705,7 +14790,7 @@ bool Player::SatisfyQuestWeek(Quest const* qInfo, bool msg) const
     return m_weeklyquests.find(qInfo->GetQuestId()) == m_weeklyquests.end();
 }
 
-bool Player::SatisfyQuestMonth(Quest const* qInfo, bool msg) const
+bool Player::SatisfyQuestMonth(Quest const* qInfo, bool /*msg*/) const
 {
     if (!qInfo->IsMonthly() || m_monthlyquests.empty())
         return true;
@@ -15328,7 +15413,7 @@ void Player::SendQuestCompleteEvent(uint32 quest_id)
     }
 }
 
-void Player::SendQuestReward(Quest const* pQuest, uint32 XP, Object* questGiver)
+void Player::SendQuestReward(Quest const* pQuest, uint32 XP, Object* /*questGiver*/)
 {
     uint32 questid = pQuest->GetQuestId();
     DEBUG_LOG("WORLD: Sent SMSG_QUESTGIVER_QUEST_COMPLETE quest = %u", questid);
@@ -15445,10 +15530,9 @@ void Player::_LoadDeclinedNames(QueryResult* result)
     if (!result)
         return;
 
-    if (m_declinedname)
-        delete m_declinedname;
-
+    delete m_declinedname;
     m_declinedname = new DeclinedName;
+
     Field* fields = result->Fetch();
     for (int i = 0; i < MAX_DECLINED_NAME_CASES; ++i)
         m_declinedname->name[i] = fields[i].GetCppString();
@@ -15687,11 +15771,8 @@ bool Player::LoadFromDB(ObjectGuid guid, SqlQueryHolder* holder)
         SetGuidValue(PLAYER_FIELD_INV_SLOT_HEAD + (slot * 2), ObjectGuid());
         SetVisibleItemSlot(slot, NULL);
 
-        if (m_items[slot])
-        {
-            delete m_items[slot];
-            m_items[slot] = NULL;
-        }
+        delete m_items[slot];
+        m_items[slot] = NULL;
     }
 
     DEBUG_FILTER_LOG(LOG_FILTER_PLAYER_STATS, "Load Basic value of player %s is: ", m_name.c_str());
@@ -15717,7 +15798,7 @@ bool Player::LoadFromDB(ObjectGuid guid, SqlQueryHolder* holder)
     SetLocationMapId(fields[15].GetUInt32());
 
     uint32 difficulty = fields[38].GetUInt32();
-    if (difficulty >= MAX_DUNGEON_DIFFICULTY)
+    if (difficulty >= MAX_DUNGEON_DIFFICULTY || getLevel() < LEVELREQUIREMENT_HEROIC)
         difficulty = DUNGEON_DIFFICULTY_NORMAL;
     SetDungeonDifficulty(Difficulty(difficulty));           // may be changed in _LoadGroup
 
@@ -16342,8 +16423,8 @@ void Player::_LoadAuras(QueryResult* result, uint32 timediff)
             if (!holder->IsEmptyHolder())
             {
                 // reset stolen single target auras
-                if (caster_guid != GetObjectGuid() && holder->IsSingleTarget())
-                    holder->SetIsSingleTarget(false);
+                if (caster_guid != GetObjectGuid() && holder->GetTrackedAuraType() == TRACK_AURA_TYPE_SINGLE_TARGET)
+                    holder->SetTrackedAuraType(TRACK_AURA_TYPE_NOT_TRACKED);
 
                 AddSpellAuraHolder(holder);
                 DETAIL_LOG("Added auras from spellid %u", spellproto->Id);
@@ -17111,7 +17192,7 @@ void Player::_LoadBoundInstances(QueryResult* result)
                 continue;
             }
 
-            MapDifficulty const* mapDiff = GetMapDifficultyData(mapId, Difficulty(difficulty));
+            MapDifficultyEntry const* mapDiff = GetMapDifficultyData(mapId, Difficulty(difficulty));
             if (!mapDiff)
             {
                 sLog.outError("_LoadBoundInstances: player %s(%d) has bind to nonexistent difficulty %d instance for map %u", GetName(), GetGUIDLow(), difficulty, mapId);
@@ -17140,7 +17221,7 @@ void Player::_LoadBoundInstances(QueryResult* result)
 InstancePlayerBind* Player::GetBoundInstance(uint32 mapid, Difficulty difficulty)
 {
     // some instances only have one difficulty
-    MapDifficulty const* mapDiff = GetMapDifficultyData(mapid, difficulty);
+    MapDifficultyEntry const* mapDiff = GetMapDifficultyData(mapid, difficulty);
     if (!mapDiff)
         return NULL;
 
@@ -17711,8 +17792,11 @@ void Player::_SaveAuras()
     {
         SpellAuraHolder* holder = itr->second;
         // skip all holders from spells that are passive or channeled
-        // do not save single target holders (unless they were cast by the player)
-        if (!holder->IsPassive() && !IsChanneledSpell(holder->GetSpellProto()) && (holder->GetCasterGuid() == GetObjectGuid() || !holder->IsSingleTarget()))
+        // save singleTarget auras if self cast.
+        bool selfCastHolder = holder->GetCasterGuid() == GetObjectGuid();
+        TrackedAuraType trackedType = holder->GetTrackedAuraType();
+        if (!holder->IsPassive() && !IsChanneledSpell(holder->GetSpellProto()) &&
+               (trackedType == TRACK_AURA_TYPE_NOT_TRACKED || (trackedType == TRACK_AURA_TYPE_SINGLE_TARGET && selfCastHolder)))
         {
             int32  damage[MAX_EFFECT_INDEX];
             uint32 periodicTime[MAX_EFFECT_INDEX];
@@ -18548,7 +18632,7 @@ void Player::BuildPlayerChat(WorldPacket* data, uint8 msgtype, const std::string
     *data << uint8(msgtype);
     *data << uint32(language);
     *data << ObjectGuid(GetObjectGuid());
-    *data << uint32(language);                              // language 2.1.0 ?
+    *data << uint32(0);                                     // 2.1.0
     *data << ObjectGuid(GetObjectGuid());
     *data << uint32(text.length() + 1);
     *data << text;
@@ -18822,7 +18906,7 @@ void Player::AddSpellMod(Aura* aura, bool apply)
         m_spellMods[mod->m_miscvalue].remove(aura);
 }
 
-template <class T> T Player::ApplySpellMod(uint32 spellId, SpellModOp op, T& basevalue, Spell const* spell)
+template <class T> T Player::ApplySpellMod(uint32 spellId, SpellModOp op, T& basevalue, Spell const* /*spell*/)
 {
     SpellEntry const* spellInfo = sSpellStore.LookupEntry(spellId);
     if (!spellInfo)
@@ -19020,9 +19104,7 @@ bool Player::ActivateTaxiPathTo(std::vector<uint32> const& nodes, Creature* npc 
     // not let cheating with start flight in time of logout process || if casting not finished || while in combat || if not use Spell's with EffectSendTaxi
     if (GetSession()->isLogingOut() || isInCombat())
     {
-        WorldPacket data(SMSG_ACTIVATETAXIREPLY, 4);
-        data << uint32(ERR_TAXIPLAYERBUSY);
-        GetSession()->SendPacket(&data);
+        GetSession()->SendActivateTaxiReply(ERR_TAXIPLAYERBUSY);
         return false;
     }
 
@@ -19035,26 +19117,20 @@ bool Player::ActivateTaxiPathTo(std::vector<uint32> const& nodes, Creature* npc 
         // not let cheating with start flight mounted
         if (IsMounted())
         {
-            WorldPacket data(SMSG_ACTIVATETAXIREPLY, 4);
-            data << uint32(ERR_TAXIPLAYERALREADYMOUNTED);
-            GetSession()->SendPacket(&data);
+            GetSession()->SendActivateTaxiReply(ERR_TAXIPLAYERALREADYMOUNTED);
             return false;
         }
 
         if (IsInDisallowedMountForm())
         {
-            WorldPacket data(SMSG_ACTIVATETAXIREPLY, 4);
-            data << uint32(ERR_TAXIPLAYERSHAPESHIFTED);
-            GetSession()->SendPacket(&data);
+            GetSession()->SendActivateTaxiReply(ERR_TAXIPLAYERSHAPESHIFTED);
             return false;
         }
 
         // not let cheating with start flight in time of logout process || if casting not finished || while in combat || if not use Spell's with EffectSendTaxi
         if (IsNonMeleeSpellCasted(false))
         {
-            WorldPacket data(SMSG_ACTIVATETAXIREPLY, 4);
-            data << uint32(ERR_TAXIPLAYERBUSY);
-            GetSession()->SendPacket(&data);
+            GetSession()->SendActivateTaxiReply(ERR_TAXIPLAYERBUSY);
             return false;
         }
     }
@@ -19083,9 +19159,7 @@ bool Player::ActivateTaxiPathTo(std::vector<uint32> const& nodes, Creature* npc 
     TaxiNodesEntry const* node = sTaxiNodesStore.LookupEntry(sourcenode);
     if (!node)
     {
-        WorldPacket data(SMSG_ACTIVATETAXIREPLY, 4);
-        data << uint32(ERR_TAXINOSUCHPATH);
-        GetSession()->SendPacket(&data);
+        GetSession()->SendActivateTaxiReply(ERR_TAXINOSUCHPATH);
         return false;
     }
 
@@ -19098,18 +19172,14 @@ bool Player::ActivateTaxiPathTo(std::vector<uint32> const& nodes, Creature* npc 
                 (node->z - GetPositionZ()) * (node->z - GetPositionZ()) >
                 (2 * INTERACTION_DISTANCE) * (2 * INTERACTION_DISTANCE) * (2 * INTERACTION_DISTANCE))
         {
-            WorldPacket data(SMSG_ACTIVATETAXIREPLY, 4);
-            data << uint32(ERR_TAXITOOFARAWAY);
-            GetSession()->SendPacket(&data);
+            GetSession()->SendActivateTaxiReply(ERR_TAXITOOFARAWAY);
             return false;
         }
     }
     // node must have pos if taxi master case (npc != NULL)
     else if (npc)
     {
-        WorldPacket data(SMSG_ACTIVATETAXIREPLY, 4);
-        data << uint32(ERR_TAXIUNSPECIFIEDSERVERERROR);
-        GetSession()->SendPacket(&data);
+        GetSession()->SendActivateTaxiReply(ERR_TAXIUNSPECIFIEDSERVERERROR);
         return false;
     }
 
@@ -19163,9 +19233,8 @@ bool Player::ActivateTaxiPathTo(std::vector<uint32> const& nodes, Creature* npc 
     // in spell case allow 0 model
     if ((mount_display_id == 0 && spellid == 0) || sourcepath == 0)
     {
-        WorldPacket data(SMSG_ACTIVATETAXIREPLY, 4);
-        data << uint32(ERR_TAXIUNSPECIFIEDSERVERERROR);
-        GetSession()->SendPacket(&data);
+        GetSession()->SendActivateTaxiReply(ERR_TAXIUNSPECIFIEDSERVERERROR);
+
         m_taxi.ClearTaxiDestinations();
         return false;
     }
@@ -19177,9 +19246,8 @@ bool Player::ActivateTaxiPathTo(std::vector<uint32> const& nodes, Creature* npc 
 
     if (money < totalcost)
     {
-        WorldPacket data(SMSG_ACTIVATETAXIREPLY, 4);
-        data << uint32(ERR_TAXINOTENOUGHMONEY);
-        GetSession()->SendPacket(&data);
+        GetSession()->SendActivateTaxiReply(ERR_TAXINOTENOUGHMONEY);
+
         m_taxi.ClearTaxiDestinations();
         return false;
     }
@@ -19192,12 +19260,7 @@ bool Player::ActivateTaxiPathTo(std::vector<uint32> const& nodes, Creature* npc 
     // prevent stealth flight
     RemoveSpellsCausingAura(SPELL_AURA_MOD_STEALTH);
 
-    WorldPacket data(SMSG_ACTIVATETAXIREPLY, 4);
-    data << uint32(ERR_TAXIOK);
-    GetSession()->SendPacket(&data);
-
-    DEBUG_LOG("WORLD: Sent SMSG_ACTIVATETAXIREPLY");
-
+    GetSession()->SendActivateTaxiReply(ERR_TAXIOK);
     GetSession()->SendDoFlight(mount_display_id, sourcepath);
 
     return true;
@@ -20438,7 +20501,7 @@ void Player::SendInitialPacketsAfterAddToMap()
     }
 
     if (HasAuraType(SPELL_AURA_MOD_STUN))
-        SetMovement(MOVE_ROOT);
+        SetRoot(true);
 
     // manual send package (have code in ApplyModifier(true,true); that don't must be re-applied.
     if (HasAuraType(SPELL_AURA_MOD_ROOT))
@@ -20467,20 +20530,64 @@ void Player::SendUpdateToOutOfRangeGroupMembers()
         pet->ResetAuraUpdateMask();
 }
 
-void Player::SendTransferAborted(uint32 mapid, uint8 reason, uint8 arg)
+void Player::SendTransferAbortedByLockStatus(MapEntry const* mapEntry, AreaLockStatus lockStatus, uint32 miscRequirement)
 {
-    WorldPacket data(SMSG_TRANSFER_ABORTED, 4 + 2);
-    data << uint32(mapid);
-    data << uint8(reason);                                  // transfer abort reason
-    switch (reason)
+    MANGOS_ASSERT(mapEntry);
+
+    DEBUG_LOG("SendTransferAbortedByLockStatus: Called for %s on map %u, LockAreaStatus %u, miscRequirement %u)", GetGuidStr().c_str(), mapEntry->MapID, lockStatus, miscRequirement);
+
+    switch (lockStatus)
     {
-        case TRANSFER_ABORT_INSUF_EXPAN_LVL:
-        case TRANSFER_ABORT_DIFFICULTY:
-        case TRANSFER_ABORT_UNIQUE_MESSAGE:
-            data << uint8(arg);
+        case AREA_LOCKSTATUS_TOO_LOW_LEVEL:
+            GetSession()->SendAreaTriggerMessage(GetSession()->GetMangosString(LANG_LEVEL_MINREQUIRED), miscRequirement);
+            break;
+        case AREA_LOCKSTATUS_ZONE_IN_COMBAT:
+            GetSession()->SendTransferAborted(mapEntry->MapID, TRANSFER_ABORT_ZONE_IN_COMBAT);
+            break;
+        case AREA_LOCKSTATUS_INSTANCE_IS_FULL:
+            GetSession()->SendTransferAborted(mapEntry->MapID, TRANSFER_ABORT_MAX_PLAYERS);
+            break;
+        case AREA_LOCKSTATUS_QUEST_NOT_COMPLETED:
+            if (mapEntry->MapID == 269)                     // Exception for Black Morass
+            {
+                GetSession()->SendAreaTriggerMessage(GetSession()->GetMangosString(LANG_TELEREQ_QUEST_BLACK_MORASS));
+                break;
+            }
+            else if (mapEntry->IsContinent())               // do not report anything for quest areatrigge
+            {
+                DEBUG_LOG("SendTransferAbortedByLockStatus: LockAreaStatus %u, do not teleport, no message sent (mapId %u)", lockStatus, mapEntry->MapID);
+                break;
+            }
+            // No break here!
+        case AREA_LOCKSTATUS_MISSING_ITEM:
+            GetSession()->SendTransferAborted(mapEntry->MapID, TRANSFER_ABORT_DIFFICULTY, GetDifficulty(mapEntry->IsRaid()));
+            break;
+        case AREA_LOCKSTATUS_MISSING_DIFFICULTY:
+            {
+                Difficulty difficulty = GetDifficulty(mapEntry->IsRaid());
+                GetSession()->SendTransferAborted(mapEntry->MapID, TRANSFER_ABORT_DIFFICULTY, difficulty > RAID_DIFFICULTY_10MAN_HEROIC ? RAID_DIFFICULTY_10MAN_HEROIC : difficulty);
+                break;
+            }
+        case AREA_LOCKSTATUS_INSUFFICIENT_EXPANSION:
+            GetSession()->SendTransferAborted(mapEntry->MapID, TRANSFER_ABORT_INSUF_EXPAN_LVL, miscRequirement);
+            break;
+        case AREA_LOCKSTATUS_NOT_ALLOWED:
+            GetSession()->SendTransferAborted(mapEntry->MapID, TRANSFER_ABORT_MAP_NOT_ALLOWED);
+            break;
+        case AREA_LOCKSTATUS_RAID_LOCKED:
+            GetSession()->SendTransferAborted(mapEntry->MapID, TRANSFER_ABORT_NEED_GROUP);
+            break;
+        case AREA_LOCKSTATUS_UNKNOWN_ERROR:
+            GetSession()->SendTransferAborted(mapEntry->MapID, TRANSFER_ABORT_ERROR);
+            break;
+        case AREA_LOCKSTATUS_OK:
+            sLog.outError("SendTransferAbortedByLockStatus: LockAreaStatus AREA_LOCKSTATUS_OK received for %s (mapId %u)", GetGuidStr().c_str(), mapEntry->MapID);
+            MANGOS_ASSERT(false);
+            break;
+        default:
+            sLog.outError("SendTransfertAbortedByLockstatus: unhandled LockAreaStatus %u, when %s attempts to enter in map %u", lockStatus, GetGuidStr().c_str(), mapEntry->MapID);
             break;
     }
-    GetSession()->SendPacket(&data);
 }
 
 void Player::SendInstanceResetWarning(uint32 mapid, Difficulty difficulty, uint32 time)
@@ -21204,6 +21311,8 @@ void Player::RewardSinglePlayerAtKill(Unit* pVictim)
 
 void Player::RewardPlayerAndGroupAtEvent(uint32 creature_id, WorldObject* pRewardSource)
 {
+    MANGOS_ASSERT((!GetGroup() || pRewardSource) && "Player::RewardPlayerAndGroupAtEvent called for Group-Case but no source for range searching provided");
+
     ObjectGuid creature_guid = pRewardSource && pRewardSource->GetTypeId() == TYPEID_UNIT ? pRewardSource->GetObjectGuid() : ObjectGuid();
 
     // prepare data for near group iteration
@@ -21216,7 +21325,7 @@ void Player::RewardPlayerAndGroupAtEvent(uint32 creature_id, WorldObject* pRewar
                 continue;
 
             if (!pGroupGuy->IsAtGroupRewardDistance(pRewardSource))
-                continue;                               // member (alive or dead) or his corpse at req. distance
+                continue;                                   // member (alive or dead) or his corpse at req. distance
 
             // quest objectives updated only for alive group member or dead but with not released body
             if (pGroupGuy->isAlive() || !pGroupGuy->HasFlag(PLAYER_FLAGS, PLAYER_FLAGS_GHOST))
@@ -21612,13 +21721,6 @@ bool Player::CanUseBattleGroundObject()
             !HasInvisibilityAura() &&                       // visible
             !isTotalImmune() &&                             // vulnerable (not immune)
             !HasAura(SPELL_RECENTLY_DROPPED_FLAG, EFFECT_INDEX_0));
-}
-
-bool Player::CanUseCapturePoint()
-{
-    return (isAlive() &&                                    // living
-            !HasStealthAura() &&                            // not stealthed
-            !HasInvisibilityAura());                        // visible
 }
 
 uint32 Player::GetBarberShopCost(uint8 newhairstyle, uint8 newhaircolor, uint8 newfacialhair, uint32 newskintone)
@@ -22745,7 +22847,7 @@ void Player::SetEquipmentSet(uint32 index, EquipmentSet eqset)
 
         if (!found)                                         // something wrong...
         {
-            sLog.outError("Player %s tried to save equipment set "UI64FMTD" (index %u), but that equipment set not found!", GetName(), eqset.Guid, index);
+            sLog.outError("Player %s tried to save equipment set " UI64FMTD " (index %u), but that equipment set not found!", GetName(), eqset.Guid, index);
             return;
         }
     }
@@ -23396,3 +23498,118 @@ void Player::_fillGearScoreData(Item* item, GearScoreVec* gearScore, uint32& two
             break;
     }
 }
+
+AreaLockStatus Player::GetAreaTriggerLockStatus(AreaTrigger const* at, Difficulty difficulty, uint32& miscRequirement)
+{
+    miscRequirement = 0;
+
+    if (!at)
+        return AREA_LOCKSTATUS_UNKNOWN_ERROR;
+
+    MapEntry const* mapEntry = sMapStore.LookupEntry(at->target_mapId);
+    if (!mapEntry)
+        return AREA_LOCKSTATUS_UNKNOWN_ERROR;
+
+    bool isRegularTargetMap = !mapEntry->IsDungeon() || GetDifficulty(mapEntry->IsRaid()) == REGULAR_DIFFICULTY;
+
+    MapDifficultyEntry const* mapDiff = GetMapDifficultyData(at->target_mapId, difficulty);
+    if (mapEntry->IsDungeon() && !mapDiff)
+        return AREA_LOCKSTATUS_MISSING_DIFFICULTY;
+
+    // Expansion requirement
+    if (GetSession()->Expansion() < mapEntry->Expansion())
+    {
+        miscRequirement = mapEntry->Expansion();
+        return AREA_LOCKSTATUS_INSUFFICIENT_EXPANSION;
+    }
+
+    // Gamemaster can always enter
+    if (isGameMaster())
+        return AREA_LOCKSTATUS_OK;
+
+    // Level Requirements
+    if (getLevel() < at->requiredLevel && !sWorld.getConfig(CONFIG_BOOL_INSTANCE_IGNORE_LEVEL))
+    {
+        miscRequirement = at->requiredLevel;
+        return AREA_LOCKSTATUS_TOO_LOW_LEVEL;
+    }
+    if (!isRegularTargetMap && !sWorld.getConfig(CONFIG_BOOL_INSTANCE_IGNORE_LEVEL) && getLevel() < uint32(maxLevelForExpansion[mapEntry->Expansion()]))
+    {
+        miscRequirement = maxLevelForExpansion[mapEntry->Expansion()];
+        return AREA_LOCKSTATUS_TOO_LOW_LEVEL;
+    }
+
+    // Raid Requirements
+    if (mapEntry->IsRaid() && !sWorld.getConfig(CONFIG_BOOL_INSTANCE_IGNORE_RAID))
+        if (!GetGroup() || !GetGroup()->isRaidGroup())
+            return AREA_LOCKSTATUS_RAID_LOCKED;
+
+    // Item Requirements: must have requiredItem OR requiredItem2, report the first one that's missing
+    if (at->requiredItem)
+    {
+        if (!HasItemCount(at->requiredItem, 1) &&
+             (!at->requiredItem2 || !HasItemCount(at->requiredItem2, 1)))
+        {
+            miscRequirement = at->requiredItem;
+            return AREA_LOCKSTATUS_MISSING_ITEM;
+        }
+    }
+    else if (at->requiredItem2 && !HasItemCount(at->requiredItem2, 1))
+    {
+        miscRequirement = at->requiredItem2;
+        return AREA_LOCKSTATUS_MISSING_ITEM;
+    }
+    // Heroic item requirements
+    if (!isRegularTargetMap && at->heroicKey)
+    {
+        if (!HasItemCount(at->heroicKey, 1) && (!at->heroicKey2 || !HasItemCount(at->heroicKey2, 1)))
+        {
+            miscRequirement = at->heroicKey;
+            return AREA_LOCKSTATUS_MISSING_ITEM;
+        }
+    }
+    else if (!isRegularTargetMap && at->heroicKey2 && !HasItemCount(at->heroicKey2, 1))
+    {
+        miscRequirement = at->heroicKey2;
+        return AREA_LOCKSTATUS_MISSING_ITEM;
+    }
+
+    // Quest Requirements
+    if (isRegularTargetMap && at->requiredQuest && !GetQuestRewardStatus(at->requiredQuest))
+    {
+        miscRequirement = at->requiredQuest;
+        return AREA_LOCKSTATUS_QUEST_NOT_COMPLETED;
+    }
+    if (!isRegularTargetMap && at->requiredQuestHeroic && !GetQuestRewardStatus(at->requiredQuestHeroic))
+    {
+        miscRequirement = at->requiredQuestHeroic;
+        return AREA_LOCKSTATUS_QUEST_NOT_COMPLETED;
+    }
+
+    // If the map is not created, assume it is possible to enter it.
+    DungeonPersistentState* state = GetBoundInstanceSaveForSelfOrGroup(at->target_mapId);
+    Map* map = sMapMgr.FindMap(at->target_mapId, state ? state->GetInstanceId() : 0);
+
+    // ToDo add achievement check
+
+    // Map's state check
+    if (map && map->IsDungeon())
+    {
+        // cannot enter if the instance is full (player cap), GMs don't count
+        if (((DungeonMap*)map)->GetPlayersCountExceptGMs() >= ((DungeonMap*)map)->GetMaxPlayers())
+            return AREA_LOCKSTATUS_INSTANCE_IS_FULL;
+
+        // In Combat check
+        if (map && map->GetInstanceData() && map->GetInstanceData()->IsEncounterInProgress())
+            return AREA_LOCKSTATUS_ZONE_IN_COMBAT;
+
+        // Bind Checks
+        InstancePlayerBind* pBind = GetBoundInstance(at->target_mapId, GetDifficulty(mapEntry->IsRaid()));
+        if (pBind && pBind->perm && pBind->state != state)
+            return AREA_LOCKSTATUS_HAS_BIND;
+        if (pBind && pBind->perm && pBind->state != map->GetPersistentState())
+            return AREA_LOCKSTATUS_HAS_BIND;
+    }
+
+    return AREA_LOCKSTATUS_OK;
+};
