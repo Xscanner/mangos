@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +25,6 @@
 
 HostileRefManager::HostileRefManager(Unit* pOwner) : iOwner(pOwner), m_redirectionMod(0.0f)
 {
-
 }
 
 HostileRefManager::~HostileRefManager()
@@ -168,6 +167,5 @@ Unit* HostileRefManager::GetThreatRedirectionTarget() const
 {
     return m_redirectionTargetGuid ? iOwner->GetMap()->GetUnit(m_redirectionTargetGuid) : NULL;
 }
-
 
 //=================================================

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,8 +17,6 @@
  */
 
 #include "MotionMaster.h"
-#include "CreatureAISelector.h"
-#include "Creature.h"
 #include "ConfusedMovementGenerator.h"
 #include "FleeingMovementGenerator.h"
 #include "HomeMovementGenerator.h"
@@ -29,7 +27,11 @@
 #include "RandomMovementGenerator.h"
 #include "movement/MoveSpline.h"
 #include "movement/MoveSplineInit.h"
+#include "Map.h"
+#include "CreatureAISelector.h"
+#include "Creature.h"
 #include "CreatureLinkingMgr.h"
+#include "Pet.h"
 #include "DBCStores.h"
 
 #include <cassert>
@@ -42,8 +44,7 @@ inline bool isStatic(MovementGenerator* mv)
 void MotionMaster::Initialize()
 {
     // stop current move
-    if (!m_owner->IsStopped())
-        m_owner->StopMoving();
+    m_owner->StopMoving();
 
     // clear ALL movement generators (including default)
     Clear(false, true);
@@ -420,6 +421,15 @@ void MotionMaster::MoveDistract(uint32 timer)
     Mutate(mgen);
 }
 
+void MotionMaster::MoveFlyOrLand(uint32 id, float x, float y, float z, bool liftOff)
+{
+    if (m_owner->GetTypeId() != TYPEID_UNIT)
+        return;
+
+    DEBUG_FILTER_LOG(LOG_FILTER_AI_AND_MOVEGENSS, "%s targeted point for %s (Id: %u X: %f Y: %f Z: %f)", m_owner->GetGuidStr().c_str(), liftOff ? "liftoff" : "landing", id, x, y, z);
+    Mutate(new FlyOrLandMovementGenerator(id, x, y, z, liftOff));
+}
+
 void MotionMaster::Mutate(MovementGenerator* m)
 {
     if (!empty())
@@ -451,6 +461,16 @@ void MotionMaster::propagateSpeedChange()
     {
         (*it)->unitSpeedChanged();
     }
+}
+
+uint32 MotionMaster::getLastReachedWaypoint() const
+{
+    for (Impl::container_type::const_reverse_iterator rItr = Impl::c.rbegin(); rItr != Impl::c.rend(); ++rItr)
+    {
+        if ((*rItr)->GetMovementGeneratorType() == WAYPOINT_MOTION_TYPE)
+            return (static_cast<WaypointMovementGenerator<Creature>*>(*rItr))->getLastReachedWaypoint();
+    }
+    return 0;
 }
 
 MovementGeneratorType MotionMaster::GetCurrentMovementGeneratorType() const
@@ -486,7 +506,7 @@ void MotionMaster::MoveJump(float x, float y, float z, float horizontalSpeed, fl
 void MotionMaster::MoveFall()
 {
     // use larger distance for vmap height search than in most other cases
-    float tz = m_owner->GetTerrain()->GetHeight(m_owner->GetPositionX(), m_owner->GetPositionY(), m_owner->GetPositionZ(), true, MAX_FALL_DISTANCE);
+    float tz = m_owner->GetMap()->GetHeight(m_owner->GetPhaseMask(), m_owner->GetPositionX(), m_owner->GetPositionY(), m_owner->GetPositionZ());
     if (tz <= INVALID_HEIGHT)
     {
         DEBUG_LOG("MotionMaster::MoveFall: unable retrive a proper height at map %u (x: %f, y: %f, z: %f).",

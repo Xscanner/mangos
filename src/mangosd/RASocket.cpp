@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -70,7 +70,6 @@ int RASocket::open(void*)
         sLog.outError("RASocket::open: peer ().get_remote_addr errno = %s", ACE_OS::strerror(errno));
         return -1;
     }
-
 
     sLog.outRALog("Incoming connection from %s.", remote_addr.get_host_addr());
 
@@ -275,7 +274,6 @@ int RASocket::handle_input(ACE_HANDLE)
                 break;
                 ///</ul>
         };
-
     }
     // no enter yet? wait for next input...
     return 0;

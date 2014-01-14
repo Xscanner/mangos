@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -51,7 +51,7 @@
 #include "CreatureLinkingMgr.h"
 
 // apply implementation of the singletons
-#include "Policies/SingletonImp.h"
+#include "Policies/Singleton.h"
 
 ObjectGuid CreatureData::GetObjectGuid(uint32 lowguid) const
 {
@@ -89,37 +89,12 @@ bool VendorItemData::RemoveItem(uint32 item_id)
 VendorItem const* VendorItemData::FindItemCostPair(uint32 item_id, uint32 extendedCost) const
 {
     for (VendorItemList::const_iterator i = m_items.begin(); i != m_items.end(); ++i)
+    {
+        // Skip checking for conditions, condition system is powerfull enough to not require additional entries only for the conditions
         if ((*i)->item == item_id && (*i)->ExtendedCost == extendedCost)
             return *i;
-    return NULL;
-}
-
-bool AssistDelayEvent::Execute(uint64 /*e_time*/, uint32 /*p_time*/)
-{
-    if (Unit* victim = m_owner.GetMap()->GetUnit(m_victimGuid))
-    {
-        while (!m_assistantGuids.empty())
-        {
-            Creature* assistant = m_owner.GetMap()->GetAnyTypeCreature(*m_assistantGuids.rbegin());
-            m_assistantGuids.pop_back();
-
-            if (assistant && assistant->CanAssistTo(&m_owner, victim))
-            {
-                assistant->SetNoCallAssistance(true);
-                if (assistant->AI())
-                    assistant->AI()->AttackStart(victim);
-            }
-        }
     }
-    return true;
-}
-
-AssistDelayEvent::AssistDelayEvent(ObjectGuid victim, Unit& owner, std::list<Creature*> const& assistants) : BasicEvent(), m_victimGuid(victim), m_owner(owner)
-{
-    // Pushing guids because in delay can happen some creature gets despawned => invalid pointer
-    m_assistantGuids.reserve(assistants.size());
-    for (std::list<Creature*>::const_iterator itr = assistants.begin(); itr != assistants.end(); ++itr)
-        m_assistantGuids.push_back((*itr)->GetObjectGuid());
+    return NULL;
 }
 
 bool ForcedDespawnDelayEvent::Execute(uint64 /*e_time*/, uint32 /*p_time*/)
@@ -159,10 +134,11 @@ bool CreatureCreatePos::Relocate(Creature* cr) const
 
 Creature::Creature(CreatureSubtype subtype) : Unit(),
     i_AI(NULL),
+    loot(this),
     lootForPickPocketed(false), lootForBody(false), lootForSkin(false),
     m_groupLootTimer(0), m_groupLootId(0),
     m_lootMoney(0), m_lootGroupRecipientId(0),
-    m_corpseDecayTimer(0), m_respawnTime(0), m_respawnDelay(25), m_corpseDelay(60), m_respawnradius(5.0f),
+    m_corpseDecayTimer(0), m_respawnTime(0), m_respawnDelay(25), m_corpseDelay(60), m_respawnradius(5.0f), m_aggroDelay(0),
     m_subtype(subtype), m_defaultMovementType(IDLE_MOTION_TYPE), m_equipmentId(0),
     m_AlreadyCallAssistance(false), m_AlreadySearchedAssistance(false),
     m_regenHealth(true), m_AI_locked(false), m_isDeadByDefault(false),
@@ -212,8 +188,17 @@ void Creature::RemoveFromWorld()
 
 void Creature::RemoveCorpse()
 {
+    // since pool system can fail to roll unspawned object, this one can remain spawned, so must set respawn nevertheless
+    if (uint16 poolid = sPoolMgr.IsPartOfAPool<Creature>(GetGUIDLow()))
+        sPoolMgr.UpdatePool<Creature>(*GetMap()->GetPersistentState(), poolid, GetGUIDLow());
+
+    if (!IsInWorld())                                       // can be despawned by update pool
+        return;
+
     if ((getDeathState() != CORPSE && !m_isDeadByDefault) || (getDeathState() != ALIVE && m_isDeadByDefault))
         return;
+
+    DEBUG_FILTER_LOG(LOG_FILTER_AI_AND_MOVEGENSS, "Removing corpse of %s ", GetGuidStr().c_str());
 
     m_corpseDecayTimer = 0;
     SetDeathState(DEAD);
@@ -235,6 +220,13 @@ void Creature::RemoveCorpse()
     float x, y, z, o;
     GetRespawnCoord(x, y, z, &o);
     GetMap()->CreatureRelocation(this, x, y, z, o);
+
+    // forced recreate creature object at clients
+    UnitVisibility currentVis = GetVisibility();
+    SetVisibility(VISIBILITY_REMOVE_CORPSE);
+    UpdateObjectVisibility();
+    SetVisibility(currentVis);                              // restore visibility state
+    UpdateObjectVisibility();
 }
 
 /**
@@ -483,6 +475,7 @@ void Creature::Update(uint32 update_diff, uint32 diff)
             {
                 DEBUG_FILTER_LOG(LOG_FILTER_AI_AND_MOVEGENSS, "Respawning...");
                 m_respawnTime = 0;
+                m_aggroDelay = sWorld.getConfig(CONFIG_UINT32_CREATURE_RESPAWN_AGGRO_DELAY);
                 lootForPickPocketed = false;
                 lootForBody         = false;
                 lootForSkin         = false;
@@ -532,52 +525,38 @@ void Creature::Update(uint32 update_diff, uint32 diff)
 
             if (m_corpseDecayTimer <= update_diff)
             {
-                // since pool system can fail to roll unspawned object, this one can remain spawned, so must set respawn nevertheless
-                if (uint16 poolid = sPoolMgr.IsPartOfAPool<Creature>(GetGUIDLow()))
-                    sPoolMgr.UpdatePool<Creature>(*GetMap()->GetPersistentState(), poolid, GetGUIDLow());
-
-                if (IsInWorld())                            // can be despawned by update pool
-                {
-                    RemoveCorpse();
-                    DEBUG_FILTER_LOG(LOG_FILTER_AI_AND_MOVEGENSS, "Removing corpse... %u ", GetEntry());
-                }
+                RemoveCorpse();
+                break;
             }
             else
-            {
                 m_corpseDecayTimer -= update_diff;
-                if (m_groupLootId)
-                {
-                    if (m_groupLootTimer <= update_diff)
-                        StopGroupLoot();
-                    else
-                        m_groupLootTimer -= update_diff;
-                }
+
+            if (m_groupLootId)                              // Loot is stopped already if corpse got removed.
+            {
+                if (m_groupLootTimer <= update_diff)
+                    StopGroupLoot();
+                else
+                    m_groupLootTimer -= update_diff;
             }
 
             break;
         }
         case ALIVE:
         {
+            if (m_aggroDelay <= update_diff)
+                m_aggroDelay = 0;
+            else
+                m_aggroDelay -= update_diff;
+
             if (m_isDeadByDefault)
             {
                 if (m_corpseDecayTimer <= update_diff)
                 {
-                    // since pool system can fail to roll unspawned object, this one can remain spawned, so must set respawn nevertheless
-                    if (uint16 poolid = sPoolMgr.IsPartOfAPool<Creature>(GetGUIDLow()))
-                        sPoolMgr.UpdatePool<Creature>(*GetMap()->GetPersistentState(), poolid, GetGUIDLow());
-
-                    if (IsInWorld())                        // can be despawned by update pool
-                    {
-                        RemoveCorpse();
-                        DEBUG_FILTER_LOG(LOG_FILTER_AI_AND_MOVEGENSS, "Removing alive corpse... %u ", GetEntry());
-                    }
-                    else
-                        return;
+                    RemoveCorpse();
+                    break;
                 }
                 else
-                {
                     m_corpseDecayTimer -= update_diff;
-                }
             }
 
             Unit::Update(update_diff, diff);
@@ -1303,9 +1282,11 @@ bool Creature::LoadFromDB(uint32 guidlow, Map* map)
     if (!Create(guidlow, pos, cinfo, TEAM_NONE, data, eventData))
         return false;
 
+    SetRespawnCoord(pos);
     m_respawnradius = data->spawndist;
 
     m_respawnDelay = data->spawntimesecs;
+    m_corpseDelay = std::min(m_respawnDelay * 9 / 10, m_corpseDelay); // set corpse delay to 90% of the respawn delay
     m_isDeadByDefault = data->is_dead;
     m_deathState = m_isDeadByDefault ? DEAD : ALIVE;
 
@@ -1316,7 +1297,7 @@ bool Creature::LoadFromDB(uint32 guidlow, Map* map)
         m_deathState = DEAD;
         if (CanFly())
         {
-            float tz = GetTerrain()->GetHeight(data->posX, data->posY, data->posZ, false);
+            float tz = GetTerrain()->GetHeightStatic(data->posX, data->posY, data->posZ, false);
             if (data->posZ - tz > 0.1)
                 Relocate(data->posX, data->posY, tz);
         }
@@ -1346,7 +1327,7 @@ bool Creature::LoadFromDB(uint32 guidlow, Map* map)
             // Just set to dead, so need to relocate like above
             if (CanFly())
             {
-                float tz = GetTerrain()->GetHeight(data->posX, data->posY, data->posZ, false);
+                float tz = GetTerrain()->GetHeightStatic(data->posX, data->posY, data->posZ, false);
                 if (data->posZ - tz > 0.1)
                     Relocate(data->posX, data->posY, tz);
             }
@@ -1366,6 +1347,17 @@ bool Creature::LoadFromDB(uint32 guidlow, Map* map)
     // Creature Linking, Initial load is handled like respawn
     if (m_isCreatureLinkingTrigger && isAlive())
         GetMap()->GetCreatureLinkingHolder()->DoCreatureLinkingEvent(LINKING_EVENT_RESPAWN, this);
+
+    // check if it is rabbit day
+    if (isAlive() && sWorld.getConfig(CONFIG_UINT32_RABBIT_DAY))
+    {
+        time_t rabbit_day = time_t(sWorld.getConfig(CONFIG_UINT32_RABBIT_DAY));
+        tm rabbit_day_tm = *localtime(&rabbit_day);
+        tm now_tm = *localtime(&sWorld.GetGameTime());
+
+        if (now_tm.tm_mon == rabbit_day_tm.tm_mon && now_tm.tm_mday == rabbit_day_tm.tm_mday)
+            CastSpell(this, 10710 + urand(0, 2), true);
+    }
 
     return true;
 }
@@ -1414,7 +1406,6 @@ bool Creature::HasInvolvedQuest(uint32 quest_id) const
     return false;
 }
 
-
 struct CreatureRespawnDeleteWorker
 {
     explicit CreatureRespawnDeleteWorker(uint32 guid) : i_guid(guid) {}
@@ -1453,6 +1444,7 @@ void Creature::DeleteFromDB(uint32 lowguid, CreatureData const* data)
     WorldDatabase.PExecuteLog("DELETE FROM game_event_creature WHERE guid=%u", lowguid);
     WorldDatabase.PExecuteLog("DELETE FROM game_event_creature_data WHERE guid=%u", lowguid);
     WorldDatabase.PExecuteLog("DELETE FROM creature_battleground WHERE guid=%u", lowguid);
+    WorldDatabase.PExecuteLog("DELETE FROM creature_linking WHERE guid=%u OR master_guid=%u", lowguid, lowguid);
     WorldDatabase.CommitTransaction();
 }
 
@@ -1527,21 +1519,16 @@ void Creature::SetDeathState(DeathState s)
 
     if (s == JUST_ALIVED)
     {
-        CreatureInfo const* cinfo = GetCreatureInfo();
-
-        SetHealth(GetMaxHealth());
-        SetLootRecipient(NULL);
-        SetWalk(true, true);
-
-        if (GetTemporaryFactionFlags() & TEMPFACTION_RESTORE_RESPAWN)
-            ClearTemporaryFaction();
+        clearUnitState(UNIT_STAT_ALL_STATE);
 
         Unit::SetDeathState(ALIVE);
 
-        clearUnitState(UNIT_STAT_ALL_STATE);
-        i_motionMaster.Initialize();
+        SetHealth(GetMaxHealth());
+        SetLootRecipient(NULL);
+        if (GetTemporaryFactionFlags() & TEMPFACTION_RESTORE_RESPAWN)
+            ClearTemporaryFaction();
 
-        SetMeleeDamageSchool(SpellSchools(cinfo->dmgschool));
+        SetMeleeDamageSchool(SpellSchools(GetCreatureInfo()->dmgschool));
 
         // Dynamic flags may be adjusted by spells. Clear them
         // first and let spell from *addon apply where needed.
@@ -1550,21 +1537,19 @@ void Creature::SetDeathState(DeathState s)
 
         // Flags after LoadCreatureAddon. Any spell in *addon
         // will not be able to adjust these.
-        SetUInt32Value(UNIT_NPC_FLAGS, cinfo->npcflag);
+        SetUInt32Value(UNIT_NPC_FLAGS, GetCreatureInfo()->npcflag);
         RemoveFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_SKINNABLE);
+
+        SetWalk(true, true);
+        i_motionMaster.Initialize();
     }
 }
 
 void Creature::Respawn()
 {
     RemoveCorpse();
-
-    // forced recreate creature object at clients
-    UnitVisibility currentVis = GetVisibility();
-    SetVisibility(VISIBILITY_RESPAWN);
-    UpdateObjectVisibility();
-    SetVisibility(currentVis);                              // restore visibility state
-    UpdateObjectVisibility();
+    if (!IsInWorld())                                       // Could be removed as part of a pool (in which case respawn-time is handled with pool-system)
+        return;
 
     if (IsDespawned())
     {
@@ -1584,10 +1569,14 @@ void Creature::ForcedDespawn(uint32 timeMSToDespawn)
         return;
     }
 
+    if (IsDespawned())
+        return;
+
     if (isAlive())
         SetDeathState(JUST_DIED);
 
     RemoveCorpse();
+
     SetHealth(0);                                           // just for nice GM-mode view
 }
 
@@ -1661,7 +1650,7 @@ SpellEntry const* Creature::ReachWithSpellAttack(Unit* pVictim)
         float range = GetSpellMaxRange(srange);
         float minrange = GetSpellMinRange(srange);
 
-        float dist = GetCombatDistance(pVictim);
+        float dist = GetCombatDistance(pVictim, spellInfo->rangeIndex == SPELL_RANGE_IDX_COMBAT);
 
         // if(!isInFront( pVictim, range ) && spellInfo->AttributesEx )
         //    continue;
@@ -1710,7 +1699,7 @@ SpellEntry const* Creature::ReachWithSpellCure(Unit* pVictim)
         float range = GetSpellMaxRange(srange);
         float minrange = GetSpellMinRange(srange);
 
-        float dist = GetCombatDistance(pVictim);
+        float dist = GetCombatDistance(pVictim, spellInfo->rangeIndex == SPELL_RANGE_IDX_COMBAT);
 
         // if(!isInFront( pVictim, range ) && spellInfo->AttributesEx )
         //    continue;
@@ -1778,24 +1767,7 @@ void Creature::CallAssistance()
     if (!m_AlreadyCallAssistance && getVictim() && !isCharmed())
     {
         SetNoCallAssistance(true);
-
-        float radius = sWorld.getConfig(CONFIG_FLOAT_CREATURE_FAMILY_ASSISTANCE_RADIUS);
-        if (radius > 0)
-        {
-            std::list<Creature*> assistList;
-
-            {
-                MaNGOS::AnyAssistCreatureInRangeCheck u_check(this, getVictim(), radius);
-                MaNGOS::CreatureListSearcher<MaNGOS::AnyAssistCreatureInRangeCheck> searcher(assistList, u_check);
-                Cell::VisitGridObjects(this, searcher, radius);
-            }
-
-            if (!assistList.empty())
-            {
-                AssistDelayEvent* e = new AssistDelayEvent(getVictim()->GetObjectGuid(), *this, assistList);
-                m_Events.AddEvent(e, m_Events.CalculateTime(sWorld.getConfig(CONFIG_UINT32_CREATURE_FAMILY_ASSISTANCE_DELAY)));
-            }
-        }
+        AI()->SendAIEventAround(AI_EVENT_CALL_ASSISTANCE, getVictim(), sWorld.getConfig(CONFIG_UINT32_CREATURE_FAMILY_ASSISTANCE_DELAY), sWorld.getConfig(CONFIG_FLOAT_CREATURE_FAMILY_ASSISTANCE_RADIUS));
     }
 }
 
@@ -1809,6 +1781,7 @@ void Creature::CallForHelp(float fRadius)
     Cell::VisitGridObjects(this, worker, fRadius);
 }
 
+/// if enemy provided, check for initial combat help against enemy
 bool Creature::CanAssistTo(const Unit* u, const Unit* enemy, bool checkfaction /*= true*/) const
 {
     // we don't need help from zombies :)
@@ -1823,7 +1796,7 @@ bool Creature::CanAssistTo(const Unit* u, const Unit* enemy, bool checkfaction /
         return false;
 
     // skip fighting creature
-    if (isInCombat())
+    if (enemy && isInCombat())
         return false;
 
     // only free creature
@@ -1843,7 +1816,7 @@ bool Creature::CanAssistTo(const Unit* u, const Unit* enemy, bool checkfaction /
     }
 
     // skip non hostile to caster enemy creatures
-    if (!IsHostileTo(enemy))
+    if (enemy && !IsHostileTo(enemy))
         return false;
 
     return true;
@@ -1858,6 +1831,9 @@ bool Creature::CanInitiateAttack()
         return false;
 
     if (isPassiveToHostile())
+        return false;
+
+    if (m_aggroDelay != 0)
         return false;
 
     return true;
@@ -2064,7 +2040,7 @@ bool Creature::MeetsSelectAttackingRequirement(Unit* pTarget, SpellEntry const* 
         SpellRangeEntry const* srange = sSpellRangeStore.LookupEntry(pSpellInfo->rangeIndex);
         float max_range = GetSpellMaxRange(srange);
         float min_range = GetSpellMinRange(srange);
-        float dist = GetCombatDistance(pTarget);
+        float dist = GetCombatDistance(pTarget, false);
 
         return dist < max_range && dist >= min_range;
     }
@@ -2205,30 +2181,29 @@ time_t Creature::GetRespawnTimeEx() const
 
 void Creature::GetRespawnCoord(float& x, float& y, float& z, float* ori, float* dist) const
 {
-    if (CreatureData const* data = sObjectMgr.GetCreatureData(GetGUIDLow()))
-    {
-        x = data->posX;
-        y = data->posY;
-        z = data->posZ;
-        if (ori)
-            *ori = data->orientation;
-        if (dist)
-            *dist = GetRespawnRadius();
-    }
-    else
-    {
-        float orient;
+    x = m_respawnPos.x;
+    y = m_respawnPos.y;
+    z = m_respawnPos.z;
 
-        GetSummonPoint(x, y, z, orient);
+    if (ori)
+        *ori = m_respawnPos.o;
 
-        if (ori)
-            *ori = orient;
-        if (dist)
-            *dist = GetRespawnRadius();
-    }
+    if (dist)
+        *dist = GetRespawnRadius();
 
     // lets check if our creatures have valid spawn coordinates
     MANGOS_ASSERT(MaNGOS::IsValidMapCoord(x, y, z) || PrintCoordinatesError(x, y, z, "respawn"));
+}
+
+void Creature::ResetRespawnCoord()
+{
+    if (CreatureData const* data = sObjectMgr.GetCreatureData(GetGUIDLow()))
+    {
+        m_respawnPos.x = data->posX;
+        m_respawnPos.y = data->posY;
+        m_respawnPos.z = data->posZ;
+        m_respawnPos.o = data->orientation;
+    }
 }
 
 void Creature::AllLootRemovedFromCorpse()
@@ -2414,6 +2389,13 @@ void Creature::SetFactionTemporary(uint32 factionId, uint32 tempFactionFlags)
 {
     m_temporaryFactionFlags = tempFactionFlags;
     setFaction(factionId);
+
+    if (m_temporaryFactionFlags & TEMPFACTION_TOGGLE_NON_ATTACKABLE)
+        RemoveFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_NON_ATTACKABLE);
+    if (m_temporaryFactionFlags & TEMPFACTION_TOGGLE_OOC_NOT_ATTACK)
+        RemoveFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_OOC_NOT_ATTACKABLE);
+    if (m_temporaryFactionFlags & TEMPFACTION_TOGGLE_PASSIVE)
+        RemoveFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_PASSIVE);
 }
 
 void Creature::ClearTemporaryFaction()
@@ -2424,8 +2406,17 @@ void Creature::ClearTemporaryFaction()
     if (isCharmed())
         return;
 
-    m_temporaryFactionFlags = TEMPFACTION_NONE;
+    // Reset to original faction
     setFaction(GetCreatureInfo()->faction_A);
+    // Reset UNIT_FLAG_NON_ATTACKABLE, UNIT_FLAG_OOC_NOT_ATTACKABLE or UNIT_FLAG_PASSIVE flags
+    if (m_temporaryFactionFlags & TEMPFACTION_TOGGLE_NON_ATTACKABLE && GetCreatureInfo()->unit_flags & UNIT_FLAG_NON_ATTACKABLE)
+        SetFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_NON_ATTACKABLE);
+    if (m_temporaryFactionFlags & TEMPFACTION_TOGGLE_OOC_NOT_ATTACK && GetCreatureInfo()->unit_flags & UNIT_FLAG_OOC_NOT_ATTACKABLE && !isInCombat())
+        SetFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_OOC_NOT_ATTACKABLE);
+    if (m_temporaryFactionFlags & TEMPFACTION_TOGGLE_PASSIVE && GetCreatureInfo()->unit_flags & UNIT_FLAG_PASSIVE)
+        SetFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_PASSIVE);
+
+    m_temporaryFactionFlags = TEMPFACTION_NONE;
 }
 
 void Creature::SendAreaSpiritHealerQueryOpcode(Player* pl)

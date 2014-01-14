@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -305,12 +305,13 @@ bool ChatHandler::HandleReloadAllScriptsCommand(char* /*args*/)
     }
 
     sLog.outString("Re-Loading Scripts...");
-    HandleReloadGameObjectScriptsCommand((char*)"a");
-    HandleReloadGossipScriptsCommand((char*)"a");
-    HandleReloadEventScriptsCommand((char*)"a");
-    HandleReloadQuestEndScriptsCommand((char*)"a");
-    HandleReloadQuestStartScriptsCommand((char*)"a");
-    HandleReloadSpellScriptsCommand((char*)"a");
+    HandleReloadDBScriptsOnCreatureDeathCommand((char*)"a");
+    HandleReloadDBScriptsOnGoUseCommand((char*)"a");
+    HandleReloadDBScriptsOnGossipCommand((char*)"a");
+    HandleReloadDBScriptsOnEventCommand((char*)"a");
+    HandleReloadDBScriptsOnQuestEndCommand((char*)"a");
+    HandleReloadDBScriptsOnQuestStartCommand((char*)"a");
+    HandleReloadDBScriptsOnSpellCommand((char*)"a");
     SendGlobalSysMessage("DB tables `*_scripts` reloaded.");
     HandleReloadDbScriptStringCommand((char*)"a");
     return true;
@@ -345,7 +346,7 @@ bool ChatHandler::HandleReloadAllSpellCommand(char* /*args*/)
 bool ChatHandler::HandleReloadAllGossipsCommand(char* args)
 {
     if (*args != 'a')                                       // already reload from all_scripts
-        HandleReloadGossipScriptsCommand((char*)"a");
+        HandleReloadDBScriptsOnGossipCommand((char*)"a");
     HandleReloadGossipMenuCommand((char*)"a");
     HandleReloadNpcGossipCommand((char*)"a");
     HandleReloadPointsOfInterestCommand((char*)"a");
@@ -451,26 +452,6 @@ bool ChatHandler::HandleReloadGossipMenuCommand(char* /*args*/)
 {
     sObjectMgr.LoadGossipMenus();
     SendGlobalSysMessage("DB tables `gossip_menu` and `gossip_menu_option` reloaded.");
-    return true;
-}
-
-bool ChatHandler::HandleReloadGossipScriptsCommand(char* args)
-{
-    if (sScriptMgr.IsScriptScheduled())
-    {
-        SendSysMessage("DB scripts used currently, please attempt reload later.");
-        SetSentErrorMessage(true);
-        return false;
-    }
-
-    if (*args != 'a')
-        sLog.outString("Re-Loading Scripts from `gossip_scripts`...");
-
-    sScriptMgr.LoadGossipScripts();
-
-    if (*args != 'a')
-        SendGlobalSysMessage("DB table `gossip_scripts` reloaded.");
-
     return true;
 }
 
@@ -867,50 +848,8 @@ bool ChatHandler::HandleReloadBattleEventCommand(char* /*args*/)
     return true;
 }
 
-bool ChatHandler::HandleReloadGameObjectScriptsCommand(char* args)
-{
-    if (sScriptMgr.IsScriptScheduled())
-    {
-        SendSysMessage("DB scripts used currently, please attempt reload later.");
-        SetSentErrorMessage(true);
-        return false;
-    }
-
-    if (*args != 'a')
-        sLog.outString("Re-Loading Scripts from `gameobject_[template]_scripts`...");
-
-    sScriptMgr.LoadGameObjectScripts();
-    sScriptMgr.LoadGameObjectTemplateScripts();
-
-    if (*args != 'a')
-        SendGlobalSysMessage("DB table `gameobject_[template]_scripts` reloaded.");
-
-    return true;
-}
-
-bool ChatHandler::HandleReloadEventScriptsCommand(char* args)
-{
-    if (sScriptMgr.IsScriptScheduled())
-    {
-        SendSysMessage("DB scripts used currently, please attempt reload later.");
-        SetSentErrorMessage(true);
-        return false;
-    }
-
-    if (*args != 'a')
-        sLog.outString("Re-Loading Scripts from `event_scripts`...");
-
-    sScriptMgr.LoadEventScripts();
-
-    if (*args != 'a')
-        SendGlobalSysMessage("DB table `event_scripts` reloaded.");
-
-    return true;
-}
-
 bool ChatHandler::HandleReloadEventAITextsCommand(char* /*args*/)
 {
-
     sLog.outString("Re-Loading Texts from `creature_ai_texts`...");
     sEventAIMgr.LoadCreatureEventAI_Texts(true);
     SendGlobalSysMessage("DB table `creature_ai_texts` reloaded.");
@@ -933,71 +872,152 @@ bool ChatHandler::HandleReloadEventAIScriptsCommand(char* /*args*/)
     return true;
 }
 
-bool ChatHandler::HandleReloadQuestEndScriptsCommand(char* args)
-{
-    if (sScriptMgr.IsScriptScheduled())
-    {
-        SendSysMessage("DB scripts used currently, please attempt reload later.");
-        SetSentErrorMessage(true);
-        return false;
-    }
-
-    if (*args != 'a')
-        sLog.outString("Re-Loading Scripts from `quest_end_scripts`...");
-
-    sScriptMgr.LoadQuestEndScripts();
-
-    if (*args != 'a')
-        SendGlobalSysMessage("DB table `quest_end_scripts` reloaded.");
-
-    return true;
-}
-
-bool ChatHandler::HandleReloadQuestStartScriptsCommand(char* args)
-{
-    if (sScriptMgr.IsScriptScheduled())
-    {
-        SendSysMessage("DB scripts used currently, please attempt reload later.");
-        SetSentErrorMessage(true);
-        return false;
-    }
-
-    if (*args != 'a')
-        sLog.outString("Re-Loading Scripts from `quest_start_scripts`...");
-
-    sScriptMgr.LoadQuestStartScripts();
-
-    if (*args != 'a')
-        SendGlobalSysMessage("DB table `quest_start_scripts` reloaded.");
-
-    return true;
-}
-
-bool ChatHandler::HandleReloadSpellScriptsCommand(char* args)
-{
-    if (sScriptMgr.IsScriptScheduled())
-    {
-        SendSysMessage("DB scripts used currently, please attempt reload later.");
-        SetSentErrorMessage(true);
-        return false;
-    }
-
-    if (*args != 'a')
-        sLog.outString("Re-Loading Scripts from `spell_scripts`...");
-
-    sScriptMgr.LoadSpellScripts();
-
-    if (*args != 'a')
-        SendGlobalSysMessage("DB table `spell_scripts` reloaded.");
-
-    return true;
-}
-
 bool ChatHandler::HandleReloadDbScriptStringCommand(char* /*args*/)
 {
     sLog.outString("Re-Loading Script strings from `db_script_string`...");
     sScriptMgr.LoadDbScriptStrings();
     SendGlobalSysMessage("DB table `db_script_string` reloaded.");
+    return true;
+}
+
+bool ChatHandler::HandleReloadDBScriptsOnGossipCommand(char* args)
+{
+    if (sScriptMgr.IsScriptScheduled())
+    {
+        SendSysMessage("DB scripts used currently, please attempt reload later.");
+        SetSentErrorMessage(true);
+        return false;
+    }
+
+    if (*args != 'a')
+        sLog.outString("Re-Loading Scripts from `dbscripts_on_gossip`...");
+
+    sScriptMgr.LoadGossipScripts();
+
+    if (*args != 'a')
+        SendGlobalSysMessage("DB table `dbscripts_on_gossip` reloaded.");
+
+    return true;
+}
+
+bool ChatHandler::HandleReloadDBScriptsOnSpellCommand(char* args)
+{
+    if (sScriptMgr.IsScriptScheduled())
+    {
+        SendSysMessage("DB scripts used currently, please attempt reload later.");
+        SetSentErrorMessage(true);
+        return false;
+    }
+
+    if (*args != 'a')
+        sLog.outString("Re-Loading Scripts from `dbscripts_on_spell`...");
+
+    sScriptMgr.LoadSpellScripts();
+
+    if (*args != 'a')
+        SendGlobalSysMessage("DB table `dbscripts_on_spell` reloaded.");
+
+    return true;
+}
+
+bool ChatHandler::HandleReloadDBScriptsOnQuestStartCommand(char* args)
+{
+    if (sScriptMgr.IsScriptScheduled())
+    {
+        SendSysMessage("DB scripts used currently, please attempt reload later.");
+        SetSentErrorMessage(true);
+        return false;
+    }
+
+    if (*args != 'a')
+        sLog.outString("Re-Loading Scripts from `dbscripts_on_quest_start`...");
+
+    sScriptMgr.LoadQuestStartScripts();
+
+    if (*args != 'a')
+        SendGlobalSysMessage("DB table `dbscripts_on_quest_start` reloaded.");
+
+    return true;
+}
+
+bool ChatHandler::HandleReloadDBScriptsOnQuestEndCommand(char* args)
+{
+    if (sScriptMgr.IsScriptScheduled())
+    {
+        SendSysMessage("DB scripts used currently, please attempt reload later.");
+        SetSentErrorMessage(true);
+        return false;
+    }
+
+    if (*args != 'a')
+        sLog.outString("Re-Loading Scripts from `dbscripts_on_quest_end`...");
+
+    sScriptMgr.LoadQuestEndScripts();
+
+    if (*args != 'a')
+        SendGlobalSysMessage("DB table `dbscripts_on_quest_end` reloaded.");
+
+    return true;
+}
+
+bool ChatHandler::HandleReloadDBScriptsOnEventCommand(char* args)
+{
+    if (sScriptMgr.IsScriptScheduled())
+    {
+        SendSysMessage("DB scripts used currently, please attempt reload later.");
+        SetSentErrorMessage(true);
+        return false;
+    }
+
+    if (*args != 'a')
+        sLog.outString("Re-Loading Scripts from `dbscripts_on_event`...");
+
+    sScriptMgr.LoadEventScripts();
+
+    if (*args != 'a')
+        SendGlobalSysMessage("DB table `dbscripts_on_event` reloaded.");
+
+    return true;
+}
+
+bool ChatHandler::HandleReloadDBScriptsOnGoUseCommand(char* args)
+{
+    if (sScriptMgr.IsScriptScheduled())
+    {
+        SendSysMessage("DB scripts used currently, please attempt reload later.");
+        SetSentErrorMessage(true);
+        return false;
+    }
+
+    if (*args != 'a')
+        sLog.outString("Re-Loading Scripts from `dbscripts_on_go[_template]_use`...");
+
+    sScriptMgr.LoadGameObjectScripts();
+    sScriptMgr.LoadGameObjectTemplateScripts();
+
+    if (*args != 'a')
+        SendGlobalSysMessage("DB table `dbscripts_on_go[_template]_use` reloaded.");
+
+    return true;
+}
+
+bool ChatHandler::HandleReloadDBScriptsOnCreatureDeathCommand(char* args)
+{
+    if (sScriptMgr.IsScriptScheduled())
+    {
+        SendSysMessage("DB scripts used currently, please attempt reload later.");
+        SetSentErrorMessage(true);
+        return false;
+    }
+
+    if (*args != 'a')
+        sLog.outString("Re-Loading Scripts from `dbscripts_on_creature_death`...");
+
+    sScriptMgr.LoadCreatureDeathScripts();
+
+    if (*args != 'a')
+        SendGlobalSysMessage("DB table `dbscripts_on_creature_death` reloaded.");
+
     return true;
 }
 
@@ -1234,7 +1254,6 @@ bool ChatHandler::HandleAccountSetPasswordCommand(char* args)
     SetSentErrorMessage(true);
     return false;
 }
-
 
 void ChatHandler::ShowAchievementCriteriaListHelper(AchievementCriteriaEntry const* criEntry, AchievementEntry const* achEntry, LocaleConstant loc, Player* target /*= NULL*/)
 {
@@ -3084,7 +3103,6 @@ bool ChatHandler::HandleListCreatureCommand(char* args)
     return true;
 }
 
-
 void ChatHandler::ShowItemListHelper(uint32 itemId, int loc_idx, Player* target /*=NULL*/)
 {
     ItemPrototype const* itemProto = sItemStorage.LookupEntry<ItemPrototype >(itemId);
@@ -3394,7 +3412,6 @@ bool ChatHandler::HandleLookupSpellCommand(char* args)
     return true;
 }
 
-
 void ChatHandler::ShowQuestListHelper(uint32 questId, int32 loc_idx, Player* target /*= NULL*/)
 {
     Quest const* qinfo = sObjectMgr.GetQuestTemplate(questId);
@@ -3532,16 +3549,12 @@ bool ChatHandler::HandleLookupObjectCommand(char* args)
 
     uint32 counter = 0;
 
-    for (uint32 id = 0; id < sGOStorage.GetMaxEntry(); ++id)
+    for (SQLStorageBase::SQLSIterator<GameObjectInfo> itr = sGOStorage.getDataBegin<GameObjectInfo>(); itr < sGOStorage.getDataEnd<GameObjectInfo>(); ++itr)
     {
-        GameObjectInfo const* gInfo = sGOStorage.LookupEntry<GameObjectInfo>(id);
-        if (!gInfo)
-            continue;
-
         int loc_idx = GetSessionDbLocaleIndex();
         if (loc_idx >= 0)
         {
-            GameObjectLocale const* gl = sObjectMgr.GetGameObjectLocale(id);
+            GameObjectLocale const* gl = sObjectMgr.GetGameObjectLocale(itr->id);
             if (gl)
             {
                 if ((int32)gl->Name.size() > loc_idx && !gl->Name[loc_idx].empty())
@@ -3551,9 +3564,9 @@ bool ChatHandler::HandleLookupObjectCommand(char* args)
                     if (Utf8FitTo(name, wnamepart))
                     {
                         if (m_session)
-                            PSendSysMessage(LANG_GO_ENTRY_LIST_CHAT, id, id, name.c_str());
+                            PSendSysMessage(LANG_GO_ENTRY_LIST_CHAT, itr->id, itr->id, name.c_str());
                         else
-                            PSendSysMessage(LANG_GO_ENTRY_LIST_CONSOLE, id, name.c_str());
+                            PSendSysMessage(LANG_GO_ENTRY_LIST_CONSOLE, itr->id, name.c_str());
                         ++counter;
                         continue;
                     }
@@ -3561,16 +3574,16 @@ bool ChatHandler::HandleLookupObjectCommand(char* args)
             }
         }
 
-        std::string name = gInfo->name;
+        std::string name = itr->name;
         if (name.empty())
             continue;
 
         if (Utf8FitTo(name, wnamepart))
         {
             if (m_session)
-                PSendSysMessage(LANG_GO_ENTRY_LIST_CHAT, id, id, name.c_str());
+                PSendSysMessage(LANG_GO_ENTRY_LIST_CHAT, itr->id, itr->id, name.c_str());
             else
-                PSendSysMessage(LANG_GO_ENTRY_LIST_CONSOLE, id, name.c_str());
+                PSendSysMessage(LANG_GO_ENTRY_LIST_CONSOLE, itr->id, name.c_str());
             ++counter;
         }
     }
@@ -4678,7 +4691,6 @@ bool ChatHandler::HandleAuctionItemCommand(char* args)
         MANGOS_ASSERT(newItem);
 
         auctionHouse->AddAuction(auctionHouseEntry, newItem, etime, price, buyout);
-
     }
     while (item_count);
 
@@ -5954,7 +5966,7 @@ bool ChatHandler::HandleGMFlyCommand(char* args)
     if (!target)
         target = m_session->GetPlayer();
 
-    WorldPacket data(12);
+    WorldPacket data;
     data.SetOpcode(value ? SMSG_MOVE_SET_CAN_FLY : SMSG_MOVE_UNSET_CAN_FLY);
     data << target->GetPackGUID();
     data << uint32(0);                                      // unknown
@@ -6664,7 +6676,6 @@ bool ChatHandler::ShowPlayerListHelper(QueryResult* result, uint32* limit, bool 
                 PSendSysMessage(LANG_CHARACTERS_LIST_LINE_CONSOLE, guid, name.c_str(), race_name, class_name, level);
             else
                 PSendSysMessage(LANG_CHARACTERS_LIST_LINE_CHAT, guid, name.c_str(), name.c_str(), race_name, class_name, level);
-
         }
         while (result->NextRow());
 
@@ -6676,7 +6687,6 @@ bool ChatHandler::ShowPlayerListHelper(QueryResult* result, uint32* limit, bool 
 
     return true;
 }
-
 
 /// Output list of character for account
 bool ChatHandler::HandleAccountCharactersCommand(char* args)
@@ -6765,8 +6775,6 @@ bool ChatHandler::HandleSendMassMailCommand(char* args)
     PSendSysMessage(LANG_MAIL_SENT, name);
     return true;
 }
-
-
 
 bool ChatHandler::HandleSendItemsHelper(MailDraft& draft, char* args)
 {
@@ -6884,7 +6892,6 @@ bool ChatHandler::HandleSendMassItemsCommand(char* args)
 
     // need dynamic object because it trasfered to mass mailer
     MailDraft* draft = new MailDraft;
-
 
     // fill mail
     if (!HandleSendItemsHelper(*draft, args))

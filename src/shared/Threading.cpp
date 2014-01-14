@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -103,7 +103,6 @@ int ThreadPriority::getPriority(Priority p) const
 
 Thread::Thread() : m_iThreadId(0), m_hThreadHandle(0), m_task(0)
 {
-
 }
 
 Thread::Thread(Runnable* instance) : m_iThreadId(0), m_hThreadHandle(0), m_task(instance)

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,8 +20,6 @@
 #define MANGOS_POINTMOVEMENTGENERATOR_H
 
 #include "MovementGenerator.h"
-#include "FollowerReference.h"
-#include "Creature.h"
 
 template<class T>
 class MANGOS_DLL_SPEC PointMovementGenerator
@@ -72,6 +70,18 @@ class EffectMovementGenerator : public MovementGenerator
         MovementGeneratorType GetMovementGeneratorType() const override { return EFFECT_MOTION_TYPE; }
     private:
         uint32 m_Id;
+};
+
+class MANGOS_DLL_SPEC FlyOrLandMovementGenerator : public PointMovementGenerator<Creature>
+{
+    public:
+        FlyOrLandMovementGenerator(uint32 _id, float _x, float _y, float _z, bool liftOff) :
+            PointMovementGenerator<Creature>(_id, _x, _y, _z, false),
+            m_liftOff(liftOff) {}
+
+        void Initialize(Unit& unit) override;
+    private:
+        bool m_liftOff;
 };
 
 #endif

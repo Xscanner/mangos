@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -54,25 +54,22 @@ struct FriendInfo
     uint32 Class;
     std::string Note;
 
-    FriendInfo()
-    {
-        Status = FRIEND_STATUS_OFFLINE;
-        Flags = 0;
-        Area = 0;
-        Level = 0;
-        Class = 0;
-        Note = "";
-    }
+    FriendInfo() :
+        Status(FRIEND_STATUS_OFFLINE),
+        Flags(0),
+        Area(0),
+        Level(0),
+        Class(0)
+    {}
 
-    FriendInfo(uint32 flags, const std::string& note)
-    {
-        Status = FRIEND_STATUS_OFFLINE;
-        Flags = flags;
-        Area = 0;
-        Level = 0;
-        Class = 0;
-        Note = note;
-    }
+    FriendInfo(uint32 flags, const std::string& note) :
+        Status(FRIEND_STATUS_OFFLINE),
+        Flags(flags),
+        Area(0),
+        Level(0),
+        Class(0),
+        Note(note)
+    {}
 };
 
 typedef std::map<uint32, FriendInfo> PlayerSocialMap;

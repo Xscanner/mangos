@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -37,6 +37,8 @@
 #include "VMapFactory.h"
 #include "MoveMap.h"
 #include "BattleGround/BattleGroundMgr.h"
+#include "Calendar.h"
+#include "Chat.h"
 
 Map::~Map()
 {
@@ -61,11 +63,10 @@ Map::~Map()
 
 void Map::LoadMapAndVMap(int gx, int gy)
 {
-    if (m_bLoadedGrids[gx][gx])
+    if (m_bLoadedGrids[gx][gy])
         return;
 
-    GridMap* pInfo = m_TerrainData->Load(gx, gy);
-    if (pInfo)
+    if (m_TerrainData->Load(gx, gy))
         m_bLoadedGrids[gx][gy] = true;
 }
 
@@ -342,7 +343,7 @@ Map::Add(T* obj)
     UpdateObjectVisibility(obj, cell, p);
 }
 
-void Map::MessageBroadcast(Player* player, WorldPacket* msg, bool to_self)
+void Map::MessageBroadcast(Player const* player, WorldPacket* msg, bool to_self)
 {
     CellPair p = MaNGOS::ComputeCellPair(player->GetPositionX(), player->GetPositionY());
 
@@ -363,7 +364,7 @@ void Map::MessageBroadcast(Player* player, WorldPacket* msg, bool to_self)
     cell.Visit(p, message, *this, *player, GetVisibilityDistance());
 }
 
-void Map::MessageBroadcast(WorldObject* obj, WorldPacket* msg)
+void Map::MessageBroadcast(WorldObject const* obj, WorldPacket* msg)
 {
     CellPair p = MaNGOS::ComputeCellPair(obj->GetPositionX(), obj->GetPositionY());
 
@@ -386,7 +387,7 @@ void Map::MessageBroadcast(WorldObject* obj, WorldPacket* msg)
     cell.Visit(p, message, *this, *obj, GetVisibilityDistance());
 }
 
-void Map::MessageDistBroadcast(Player* player, WorldPacket* msg, float dist, bool to_self, bool own_team_only)
+void Map::MessageDistBroadcast(Player const* player, WorldPacket* msg, float dist, bool to_self, bool own_team_only)
 {
     CellPair p = MaNGOS::ComputeCellPair(player->GetPositionX(), player->GetPositionY());
 
@@ -407,7 +408,7 @@ void Map::MessageDistBroadcast(Player* player, WorldPacket* msg, float dist, boo
     cell.Visit(p, message, *this, *player, dist);
 }
 
-void Map::MessageDistBroadcast(WorldObject* obj, WorldPacket* msg, float dist)
+void Map::MessageDistBroadcast(WorldObject const* obj, WorldPacket* msg, float dist)
 {
     CellPair p = MaNGOS::ComputeCellPair(obj->GetPositionX(), obj->GetPositionY());
 
@@ -435,6 +436,8 @@ bool Map::loaded(const GridPair& p) const
 
 void Map::Update(const uint32& t_diff)
 {
+    m_dyn_tree.update(t_diff);
+
     /// update worldsessions for existing players
     for (m_mapRefIter = m_mapRefManager.begin(); m_mapRefIter != m_mapRefManager.end(); ++m_mapRefIter)
     {
@@ -782,7 +785,7 @@ bool Map::UnloadGrid(const uint32& x, const uint32& y, bool pForce)
         if (!pForce && ActiveObjectsNearGrid(x, y))
             return false;
 
-        DEBUG_LOG("Unloading grid[%u,%u] for map %u", x, y, i_id);
+        DEBUG_FILTER_LOG(LOG_FILTER_MAP_LOADING, "Unloading grid[%u,%u] for map %u", x, y, i_id);
         ObjectGridUnloader unloader(*grid);
 
         // Finish remove and delete all creatures with delayed remove before moving to respawn grids
@@ -811,7 +814,7 @@ bool Map::UnloadGrid(const uint32& x, const uint32& y, bool pForce)
         m_TerrainData->Unload(gx, gy);
     }
 
-    DEBUG_LOG("Unloading grid[%u,%u] for map %u finished", x, y, i_id);
+    DEBUG_FILTER_LOG(LOG_FILTER_MAP_LOADING, "Unloading grid[%u,%u] for map %u finished", x, y, i_id);
     return true;
 }
 
@@ -1332,6 +1335,7 @@ bool DungeonMap::Add(Player* player)
                     data << uint32(0);
                     player->GetSession()->SendPacket(&data);
                     player->BindToInstance(GetPersistanceState(), true);
+                    sCalendarMgr.SendCalendarRaidLockoutAdd(player, GetPersistanceState());
                 }
             }
         }
@@ -1438,6 +1442,7 @@ void DungeonMap::PermBindAllPlayers(Player* player)
             WorldPacket data(SMSG_INSTANCE_SAVE_CREATED, 4);
             data << uint32(0);
             plr->GetSession()->SendPacket(&data);
+            sCalendarMgr.SendCalendarRaidLockoutAdd(plr, GetPersistanceState());
         }
 
         // if the leader is not in the instance the group will not get a perm bind
@@ -1484,7 +1489,6 @@ DungeonPersistentState* DungeonMap::GetPersistanceState() const
     return (DungeonPersistentState*)Map::GetPersistentState();
 }
 
-
 /* ******* Battleground Instance Maps ******* */
 
 BattleGroundMap::BattleGroundMap(uint32 id, time_t expiry, uint32 InstanceId, uint8 spawnMode)
@@ -1509,7 +1513,6 @@ BattleGroundPersistentState* BattleGroundMap::GetPersistanceState() const
 {
     return (BattleGroundPersistentState*)Map::GetPersistentState();
 }
-
 
 void BattleGroundMap::InitVisibilityDistance()
 {
@@ -1581,8 +1584,10 @@ bool Map::CanEnter(Player* player)
 }
 
 /// Put scripts in the execution queue
-bool Map::ScriptsStart(ScriptMapMapName const& scripts, uint32 id, Object* source, Object* target)
+bool Map::ScriptsStart(ScriptMapMapName const& scripts, uint32 id, Object* source, Object* target, ScriptExecutionParam execParams /*=SCRIPT_EXEC_PARAM_UNIQUE_BY_SOURCE_TARGET*/)
 {
+    MANGOS_ASSERT(source);
+
     ///- Find the script map
     ScriptMapMap::const_iterator s = scripts.second.find(id);
     if (s == scripts.second.end())
@@ -1592,6 +1597,20 @@ bool Map::ScriptsStart(ScriptMapMapName const& scripts, uint32 id, Object* sourc
     ObjectGuid sourceGuid = source->GetObjectGuid();
     ObjectGuid targetGuid = target ? target->GetObjectGuid() : ObjectGuid();
     ObjectGuid ownerGuid  = source->isType(TYPEMASK_ITEM) ? ((Item*)source)->GetOwnerGuid() : ObjectGuid();
+
+    if (execParams)                                         // Check if the execution should be uniquely
+    {
+        for (ScriptScheduleMap::const_iterator searchItr = m_scriptSchedule.begin(); searchItr != m_scriptSchedule.end(); ++searchItr)
+        {
+            if (searchItr->second.IsSameScript(scripts.first, id,
+                                               execParams & SCRIPT_EXEC_PARAM_UNIQUE_BY_SOURCE ? sourceGuid : ObjectGuid(),
+                                               execParams & SCRIPT_EXEC_PARAM_UNIQUE_BY_TARGET ? targetGuid : ObjectGuid(), ownerGuid))
+            {
+                DEBUG_LOG("DB-SCRIPTS: Process table `%s` id %u. Skip script as script already started for source %s, target %s - ScriptsStartParams %u", scripts.first, id, sourceGuid.GetString().c_str(), targetGuid.GetString().c_str(), execParams);
+                return true;
+            }
+        }
+    }
 
     ///- Schedule script execution for all scripts in the script map
     ScriptMap const* s2 = &(s->second);
@@ -1634,12 +1653,33 @@ void Map::ScriptsProcess()
     // ok as multimap is a *sorted* associative container
     while (!m_scriptSchedule.empty() && (iter->first <= sWorld.GetGameTime()))
     {
-        iter->second.HandleScriptStep();
+        if (iter->second.HandleScriptStep())
+        {
+            // Terminate following script steps of this script
+            const char* tableName = iter->second.GetTableName();
+            uint32 id = iter->second.GetId();
+            ObjectGuid sourceGuid = iter->second.GetSourceGuid();
+            ObjectGuid targetGuid = iter->second.GetTargetGuid();
+            ObjectGuid ownerGuid = iter->second.GetOwnerGuid();
 
-        m_scriptSchedule.erase(iter);
+            for (ScriptScheduleMap::iterator rmItr = m_scriptSchedule.begin(); rmItr != m_scriptSchedule.end();)
+            {
+                if (rmItr->second.IsSameScript(tableName, id, sourceGuid, targetGuid, ownerGuid))
+                {
+                    m_scriptSchedule.erase(rmItr++);
+                    sScriptMgr.DecreaseScheduledScriptCount();
+                }
+                else
+                    ++rmItr;
+            }
+        }
+        else
+        {
+            m_scriptSchedule.erase(iter);
+
+            sScriptMgr.DecreaseScheduledScriptCount();
+        }
         iter = m_scriptSchedule.begin();
-
-        sScriptMgr.DecreaseScheduledScriptCount();
     }
 }
 
@@ -1819,7 +1859,7 @@ uint32 Map::GenerateLocalLowGuid(HighGuid guidhigh)
 class StaticMonsterChatBuilder
 {
     public:
-        StaticMonsterChatBuilder(CreatureInfo const* cInfo, ChatMsg msgtype, int32 textId, uint32 language, Unit* target, uint32 senderLowGuid = 0)
+        StaticMonsterChatBuilder(CreatureInfo const* cInfo, ChatMsg msgtype, int32 textId, Language language, Unit const* target, uint32 senderLowGuid = 0)
             : i_cInfo(cInfo), i_msgtype(msgtype), i_textId(textId), i_language(language), i_target(target)
         {
             // 0 lowguid not used in core, but accepted fine in this case by client
@@ -1832,7 +1872,8 @@ class StaticMonsterChatBuilder
             char const* nameForLocale = i_cInfo->Name;
             sObjectMgr.GetCreatureLocaleStrings(i_cInfo->Entry, loc_idx, &nameForLocale);
 
-            WorldObject::BuildMonsterChat(&data, i_senderGuid, i_msgtype, text, i_language, nameForLocale, i_target ? i_target->GetObjectGuid() : ObjectGuid(), i_target ? i_target->GetNameForLocaleIdx(loc_idx) : "");
+            ChatHandler::BuildChatPacket(data, i_msgtype, text, i_language, CHAT_TAG_NONE, i_senderGuid, nameForLocale, i_target ? i_target->GetObjectGuid() : ObjectGuid(),
+                i_target ? i_target->GetNameForLocaleIdx(loc_idx) : "");
         }
 
     private:
@@ -1840,10 +1881,9 @@ class StaticMonsterChatBuilder
         CreatureInfo const* i_cInfo;
         ChatMsg i_msgtype;
         int32 i_textId;
-        uint32 i_language;
-        Unit* i_target;
+        Language i_language;
+        Unit const* i_target;
 };
-
 
 /**
  * Function simulates yell of creature
@@ -1853,7 +1893,7 @@ class StaticMonsterChatBuilder
  * @param language language of the text
  * @param target, can be NULL
  */
-void Map::MonsterYellToMap(ObjectGuid guid, int32 textId, uint32 language, Unit* target)
+void Map::MonsterYellToMap(ObjectGuid guid, int32 textId, Language language, Unit const* target) const
 {
     if (guid.IsAnyTypeCreature())
     {
@@ -1873,7 +1913,6 @@ void Map::MonsterYellToMap(ObjectGuid guid, int32 textId, uint32 language, Unit*
     }
 }
 
-
 /**
  * Function simulates yell of creature
  *
@@ -1884,7 +1923,7 @@ void Map::MonsterYellToMap(ObjectGuid guid, int32 textId, uint32 language, Unit*
  * @param senderLowGuid provide way proper show yell for near spawned creature with known lowguid,
  *        0 accepted by client else if this not important
  */
-void Map::MonsterYellToMap(CreatureInfo const* cinfo, int32 textId, uint32 language, Unit* target, uint32 senderLowGuid /*= 0*/)
+void Map::MonsterYellToMap(CreatureInfo const* cinfo, int32 textId, Language language, Unit const* target, uint32 senderLowGuid /*= 0*/) const
 {
     StaticMonsterChatBuilder say_build(cinfo, CHAT_MSG_MONSTER_YELL, textId, language, target, senderLowGuid);
     MaNGOS::LocalizedPacketDo<StaticMonsterChatBuilder> say_do(say_build);
@@ -1900,7 +1939,7 @@ void Map::MonsterYellToMap(CreatureInfo const* cinfo, int32 textId, uint32 langu
  * @param soundId Played Sound
  * @param zoneId Id of the Zone to which the sound should be restricted
  */
-void Map::PlayDirectSoundToMap(uint32 soundId, uint32 zoneId /*=0*/)
+void Map::PlayDirectSoundToMap(uint32 soundId, uint32 zoneId /*=0*/) const
 {
     WorldPacket data(SMSG_PLAY_SOUND, 4);
     data << uint32(soundId);
@@ -1914,18 +1953,60 @@ void Map::PlayDirectSoundToMap(uint32 soundId, uint32 zoneId /*=0*/)
 /**
  * Function to check if a point is in line of sight from an other point
  */
-bool Map::IsInLineOfSight(float srcX, float srcY, float srcZ, float destX, float destY, float destZ)
+bool Map::IsInLineOfSight(float srcX, float srcY, float srcZ, float destX, float destY, float destZ, uint32 phasemask) const
 {
-    VMAP::IVMapManager* vMapManager = VMAP::VMapFactory::createOrGetVMapManager();
-    return vMapManager->isInLineOfSight(GetId(), srcX, srcY, srcZ, destX, destY, destZ);
+    return VMAP::VMapFactory::createOrGetVMapManager()->isInLineOfSight(GetId(), srcX, srcY, srcZ, destX, destY, destZ)
+           && m_dyn_tree.isInLineOfSight(srcX, srcY, srcZ, destX, destY, destZ, phasemask);
 }
 
 /**
- * get the hit position and return true if we hit something
+ * get the hit position and return true if we hit something (in this case the dest position will hold the hit-position)
  * otherwise the result pos will be the dest pos
  */
-bool Map::GetObjectHitPos(float srcX, float srcY, float srcZ, float destX, float destY, float destZ, float& resX, float& resY, float& resZ, float pModifyDist)
+bool Map::GetHitPosition(float srcX, float srcY, float srcZ, float& destX, float& destY, float& destZ, uint32 phasemask, float modifyDist) const
 {
-    VMAP::IVMapManager* vMapManager = VMAP::VMapFactory::createOrGetVMapManager();
-    return vMapManager->getObjectHitPos(GetId(), srcX, srcY, srcZ, destX, destY, destZ, resX, resY, resZ, pModifyDist);
+    // at first check all static objects
+    float tempX, tempY, tempZ = 0.0f;
+    bool result0 = VMAP::VMapFactory::createOrGetVMapManager()->getObjectHitPos(GetId(), srcX, srcY, srcZ, destX, destY, destZ, tempX, tempY, tempZ, modifyDist);
+    if (result0)
+    {
+        DEBUG_LOG("Map::GetHitPosition vmaps corrects gained with static objects! new dest coords are X:%f Y:%f Z:%f", destX, destY, destZ);
+        destX = tempX;
+        destY = tempY;
+        destZ = tempZ;
+    }
+    // at second all dynamic objects, if static check has an hit, then we can calculate only to this closer point
+    bool result1 = m_dyn_tree.getObjectHitPos(phasemask, srcX, srcY, srcZ, destX, destY, destZ, tempX, tempY, tempZ, modifyDist);
+    if (result1)
+    {
+        DEBUG_LOG("Map::GetHitPosition vmaps corrects gained with dynamic objects! new dest coords are X:%f Y:%f Z:%f", destX, destY, destZ);
+        destX = tempX;
+        destY = tempY;
+        destZ = tempZ;
+    }
+    return result0 || result1;
+}
+
+float Map::GetHeight(uint32 phasemask, float x, float y, float z) const
+{
+    float staticHeight = m_TerrainData->GetHeightStatic(x, y, z);
+
+    // Get Dynamic Height around static Height (if valid)
+    float dynSearchHeight = 2.0f + (z < staticHeight ? staticHeight : z);
+    return std::max<float>(staticHeight, m_dyn_tree.getHeight(x, y, dynSearchHeight, dynSearchHeight - staticHeight, phasemask));
+}
+
+void Map::InsertGameObjectModel(const GameObjectModel& mdl)
+{
+    m_dyn_tree.insert(mdl);
+}
+
+void Map::RemoveGameObjectModel(const GameObjectModel& mdl)
+{
+    m_dyn_tree.remove(mdl);
+}
+
+bool Map::ContainsGameObjectModel(const GameObjectModel& mdl) const
+{
+    return m_dyn_tree.contains(mdl);
 }

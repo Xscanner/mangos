@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -44,14 +44,16 @@
 
 enum TempSummonType
 {
-    TEMPSUMMON_TIMED_OR_DEAD_DESPAWN       = 1,             // despawns after a specified time OR when the creature disappears
-    TEMPSUMMON_TIMED_OR_CORPSE_DESPAWN     = 2,             // despawns after a specified time OR when the creature dies
-    TEMPSUMMON_TIMED_DESPAWN               = 3,             // despawns after a specified time
-    TEMPSUMMON_TIMED_DESPAWN_OUT_OF_COMBAT = 4,             // despawns after a specified time after the creature is out of combat
-    TEMPSUMMON_CORPSE_DESPAWN              = 5,             // despawns instantly after death
-    TEMPSUMMON_CORPSE_TIMED_DESPAWN        = 6,             // despawns after a specified time after death
-    TEMPSUMMON_DEAD_DESPAWN                = 7,             // despawns when the creature disappears
-    TEMPSUMMON_MANUAL_DESPAWN              = 8              // despawns when UnSummon() is called
+    TEMPSUMMON_MANUAL_DESPAWN              = 0,             // despawns when UnSummon() is called
+    TEMPSUMMON_DEAD_DESPAWN                = 1,             // despawns when the creature disappears
+    TEMPSUMMON_CORPSE_DESPAWN              = 2,             // despawns instantly after death
+    TEMPSUMMON_CORPSE_TIMED_DESPAWN        = 3,             // despawns after a specified time after death (or when the creature disappears)
+    TEMPSUMMON_TIMED_DESPAWN               = 4,             // despawns after a specified time
+    TEMPSUMMON_TIMED_OOC_DESPAWN           = 5,             // despawns after a specified time after the creature is out of combat
+    TEMPSUMMON_TIMED_OR_DEAD_DESPAWN       = 6,             // despawns after a specified time OR when the creature disappears
+    TEMPSUMMON_TIMED_OR_CORPSE_DESPAWN     = 7,             // despawns after a specified time OR when the creature dies
+    TEMPSUMMON_TIMED_OOC_OR_DEAD_DESPAWN   = 8,             // despawns after a specified time (OOC) OR when the creature disappears
+    TEMPSUMMON_TIMED_OOC_OR_CORPSE_DESPAWN = 9,             // despawns after a specified time (OOC) OR when the creature dies
 };
 
 enum PhaseMasks
@@ -72,6 +74,7 @@ class UpdateMask;
 class InstanceData;
 class TerrainInfo;
 class TransportInfo;
+struct MangosStringLocale;
 
 typedef UNORDERED_MAP<Player*, UpdateData> UpdateDataMapType;
 
@@ -94,7 +97,6 @@ struct WorldLocation
     WorldLocation(WorldLocation const& loc)
         : mapid(loc.mapid), coord_x(loc.coord_x), coord_y(loc.coord_y), coord_z(loc.coord_z), orientation(loc.orientation) {}
 };
-
 
 // use this class to measure time between world update ticks
 // essential for units updating their spells after cells become active
@@ -384,7 +386,7 @@ class MANGOS_DLL_SPEC Object
             float*  m_floatValues;
         };
 
-        uint32* m_uint32Values_mirror;
+        std::vector<bool> m_changedValues;
 
         uint16 m_valuesCount;
 
@@ -456,17 +458,38 @@ class MANGOS_DLL_SPEC WorldObject : public Object
         void GetPosition(WorldLocation& loc) const
         { loc.mapid = m_mapId; GetPosition(loc.coord_x, loc.coord_y, loc.coord_z); loc.orientation = GetOrientation(); }
         float GetOrientation() const { return m_position.o; }
-        void GetNearPoint2D(float& x, float& y, float distance, float absAngle) const;
+
+        /// Gives a 2d-point in distance distance2d in direction absAngle around the current position (point-to-point)
+        void GetNearPoint2D(float& x, float& y, float distance2d, float absAngle) const;
+        /** Gives a "free" spot for searcher in distance distance2d in direction absAngle on "good" height
+         * @param searcher          -           for whom a spot is searched for
+         * @param x, y, z           -           position for the found spot of the searcher
+         * @param searcher_bounding_radius  -   how much space the searcher will require
+         * @param distance2d        -           distance between the middle-points
+         * @param absAngle          -           angle in which the spot is preferred
+         */
         void GetNearPoint(WorldObject const* searcher, float& x, float& y, float& z, float searcher_bounding_radius, float distance2d, float absAngle) const;
-        void GetClosePoint(float& x, float& y, float& z, float bounding_radius, float distance2d = 0, float angle = 0, const WorldObject* obj = NULL) const
+        /** Gives a "free" spot for a searcher on the distance (including bounding-radius calculation)
+         * @param x, y, z           -           position for the found spot
+         * @param bounding_radius   -           radius for the searcher
+         * @param distance2d        -           range in which to find a free spot. Default = 0.0f (which usually means the units will have contact)
+         * @param angle             -           direction in which to look for a free spot. Default = 0.0f (direction in which 'this' is looking
+         * @param obj               -           for whom to look for a spot. Default = NULL
+         */
+        void GetClosePoint(float& x, float& y, float& z, float bounding_radius, float distance2d = 0.0f, float angle = 0.0f, const WorldObject* obj = NULL) const
         {
             // angle calculated from current orientation
-            GetNearPoint(obj, x, y, z, bounding_radius, distance2d, GetOrientation() + angle);
+            GetNearPoint(obj, x, y, z, bounding_radius, distance2d + GetObjectBoundingRadius() + bounding_radius, GetOrientation() + angle);
         }
+        /** Gives a "free" spot for a searcher in contact-range of "this" (including bounding-radius calculation)
+         * @param x, y, z           -           position for the found spot
+         * @param obj               -           for whom to find a contact position. The position will be searched in direction from 'this' towards 'obj'
+         * @param distance2d        -           distance which 'obj' and 'this' should have beetween their bounding radiuses. Default = CONTACT_DISTANCE
+         */
         void GetContactPoint(const WorldObject* obj, float& x, float& y, float& z, float distance2d = CONTACT_DISTANCE) const
         {
             // angle to face `obj` to `this` using distance includes size of `obj`
-            GetNearPoint(obj, x, y, z, obj->GetObjectBoundingRadius(), distance2d, GetAngle(obj));
+            GetNearPoint(obj, x, y, z, obj->GetObjectBoundingRadius(), distance2d + GetObjectBoundingRadius() + obj->GetObjectBoundingRadius(), GetAngle(obj));
         }
 
         virtual float GetObjectBoundingRadius() const { return DEFAULT_WORLD_OBJECT_SIZE; }
@@ -536,23 +559,18 @@ class MANGOS_DLL_SPEC WorldObject : public Object
 
         virtual void CleanupsBeforeDelete();                // used in destructor or explicitly before mass creature delete to remove cross-references to already deleted units
 
-        virtual void SendMessageToSet(WorldPacket* data, bool self);
-        virtual void SendMessageToSetInRange(WorldPacket* data, float dist, bool self);
-        void SendMessageToSetExcept(WorldPacket* data, Player const* skipped_receiver);
+        virtual void SendMessageToSet(WorldPacket* data, bool self) const;
+        virtual void SendMessageToSetInRange(WorldPacket* data, float dist, bool self) const;
+        void SendMessageToSetExcept(WorldPacket* data, Player const* skipped_receiver) const;
 
-        void MonsterSay(const char* text, uint32 language, Unit* target = NULL);
-        void MonsterYell(const char* text, uint32 language, Unit* target = NULL);
-        void MonsterTextEmote(const char* text, Unit* target, bool IsBossEmote = false);
-        void MonsterWhisper(const char* text, Unit* target, bool IsBossWhisper = false);
-        void MonsterSay(int32 textId, uint32 language, Unit* target = NULL);
-        void MonsterYell(int32 textId, uint32 language, Unit* target = NULL);
-        void MonsterTextEmote(int32 textId, Unit* target, bool IsBossEmote = false);
-        void MonsterWhisper(int32 textId, Unit* receiver, bool IsBossWhisper = false);
-        void MonsterYellToZone(int32 textId, uint32 language, Unit* target);
-        static void BuildMonsterChat(WorldPacket* data, ObjectGuid senderGuid, uint8 msgtype, char const* text, uint32 language, char const* name, ObjectGuid targetGuid, char const* targetName);
+        void MonsterSay(const char* text, uint32 language, Unit const* target = NULL) const;
+        void MonsterYell(const char* text, uint32 language, Unit const* target = NULL) const;
+        void MonsterTextEmote(const char* text, Unit const* target, bool IsBossEmote = false) const;
+        void MonsterWhisper(const char* text, Unit const* target, bool IsBossWhisper = false) const;
+        void MonsterText(MangosStringLocale const* textData, Unit const* target) const;
 
-        void PlayDistanceSound(uint32 sound_id, Player* target = NULL);
-        void PlayDirectSound(uint32 sound_id, Player* target = NULL);
+        void PlayDistanceSound(uint32 sound_id, Player const* target = NULL) const;
+        void PlayDirectSound(uint32 sound_id, Player const* target = NULL) const;
 
         void SendObjectDeSpawnAnim(ObjectGuid guid);
         void SendGameObjectCustomAnim(ObjectGuid guid, uint32 animId = 0);

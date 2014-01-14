@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,7 +23,6 @@
 
 BattleGroundRV::BattleGroundRV()
 {
-
     m_StartDelayTimes[BG_STARTING_EVENT_FIRST]  = BG_START_DELAY_1M;
     m_StartDelayTimes[BG_STARTING_EVENT_SECOND] = BG_START_DELAY_30S;
     m_StartDelayTimes[BG_STARTING_EVENT_THIRD]  = BG_START_DELAY_15S;
@@ -35,24 +34,6 @@ BattleGroundRV::BattleGroundRV()
     m_StartMessageIds[BG_STARTING_EVENT_FOURTH] = LANG_ARENA_HAS_BEGUN;
 }
 
-BattleGroundRV::~BattleGroundRV()
-{
-
-}
-
-void BattleGroundRV::Update(uint32 diff)
-{
-    BattleGround::Update(diff);
-}
-
-void BattleGroundRV::StartingEventCloseDoors()
-{
-}
-
-void BattleGroundRV::StartingEventOpenDoors()
-{
-}
-
 void BattleGroundRV::AddPlayer(Player* plr)
 {
     BattleGround::AddPlayer(plr);
@@ -60,22 +41,4 @@ void BattleGroundRV::AddPlayer(Player* plr)
     BattleGroundRVScore* sc = new BattleGroundRVScore;
 
     m_PlayerScores[plr->GetObjectGuid()] = sc;
-}
-
-void BattleGroundRV::RemovePlayer(Player* /*plr*/, ObjectGuid /*guid*/)
-{
-}
-
-void BattleGroundRV::HandleKillPlayer(Player* player, Player* killer)
-{
-    BattleGround::HandleKillPlayer(player, killer);
-}
-
-void BattleGroundRV::HandleAreaTrigger(Player* /*source*/, uint32 /*trigger*/)
-{
-}
-
-bool BattleGroundRV::SetupBattleGround()
-{
-    return true;
 }

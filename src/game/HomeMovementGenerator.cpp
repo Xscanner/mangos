@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -52,7 +52,7 @@ void HomeMovementGenerator<Creature>::_setTargetLocation(Creature& owner)
     init.Launch();
 
     arrived = false;
-    owner.clearUnitState(UNIT_STAT_ALL_STATE);
+    owner.clearUnitState(UNIT_STAT_ALL_DYN_STATES);
 }
 
 bool HomeMovementGenerator<Creature>::Update(Creature& owner, const uint32& time_diff)

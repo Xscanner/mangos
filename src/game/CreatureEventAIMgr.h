@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@
 class CreatureEventAIMgr
 {
     public:
-        CreatureEventAIMgr() {};
+        CreatureEventAIMgr() : m_usedTextsAmount(0) {};
         ~CreatureEventAIMgr() {};
 
         void LoadCreatureEventAI_Texts(bool check_entry_use);
@@ -34,7 +34,6 @@ class CreatureEventAIMgr
 
         CreatureEventAI_Event_Map  const& GetCreatureEventAIMap()       const { return m_CreatureEventAI_Event_Map; }
         CreatureEventAI_Summon_Map const& GetCreatureEventAISummonMap() const { return m_CreatureEventAI_Summon_Map; }
-        CreatureEventAI_TextMap    const& GetCreatureEventAITextMap()   const { return m_CreatureEventAI_TextMap; }
 
     private:
         void CheckUnusedAITexts();
@@ -42,7 +41,8 @@ class CreatureEventAIMgr
 
         CreatureEventAI_Event_Map  m_CreatureEventAI_Event_Map;
         CreatureEventAI_Summon_Map m_CreatureEventAI_Summon_Map;
-        CreatureEventAI_TextMap    m_CreatureEventAI_TextMap;
+
+        uint32 m_usedTextsAmount;
 };
 
 #define sEventAIMgr MaNGOS::Singleton<CreatureEventAIMgr>::Instance()

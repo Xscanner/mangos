@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -433,7 +433,7 @@ void WorldSession::HandleItemQuerySingleOpcode(WorldPacket& recv_data)
 
 void WorldSession::HandleReadItemOpcode(WorldPacket& recv_data)
 {
-    // DEBUG_LOG( "WORLD: CMSG_READ_ITEM");
+    // DEBUG_LOG("WORLD: Received opcode CMSG_READ_ITEM");
 
     uint8 bag, slot;
     recv_data >> bag >> slot;
@@ -466,7 +466,7 @@ void WorldSession::HandleReadItemOpcode(WorldPacket& recv_data)
 
 void WorldSession::HandlePageQuerySkippedOpcode(WorldPacket& recv_data)
 {
-    DEBUG_LOG("WORLD: Received CMSG_PAGE_TEXT_QUERY");
+    DEBUG_LOG("WORLD: Received opcode CMSG_PAGE_TEXT_QUERY");
 
     uint32 itemid;
     ObjectGuid guid;
@@ -478,7 +478,7 @@ void WorldSession::HandlePageQuerySkippedOpcode(WorldPacket& recv_data)
 
 void WorldSession::HandleSellItemOpcode(WorldPacket& recv_data)
 {
-    DEBUG_LOG("WORLD: Received CMSG_SELL_ITEM");
+    DEBUG_LOG("WORLD: Received opcode CMSG_SELL_ITEM");
 
     ObjectGuid vendorGuid;
     ObjectGuid itemGuid;
@@ -591,7 +591,7 @@ void WorldSession::HandleSellItemOpcode(WorldPacket& recv_data)
 
 void WorldSession::HandleBuybackItem(WorldPacket& recv_data)
 {
-    DEBUG_LOG("WORLD: Received CMSG_BUYBACK_ITEM");
+    DEBUG_LOG("WORLD: Received opcode CMSG_BUYBACK_ITEM");
     ObjectGuid vendorGuid;
     uint32 slot;
 
@@ -639,7 +639,7 @@ void WorldSession::HandleBuybackItem(WorldPacket& recv_data)
 
 void WorldSession::HandleBuyItemInSlotOpcode(WorldPacket& recv_data)
 {
-    DEBUG_LOG("WORLD: Received CMSG_BUY_ITEM_IN_SLOT");
+    DEBUG_LOG("WORLD: Received opcode CMSG_BUY_ITEM_IN_SLOT");
     ObjectGuid vendorGuid;
     ObjectGuid bagGuid;
     uint32 item, slot, count;
@@ -682,7 +682,7 @@ void WorldSession::HandleBuyItemInSlotOpcode(WorldPacket& recv_data)
 
 void WorldSession::HandleBuyItemOpcode(WorldPacket& recv_data)
 {
-    DEBUG_LOG("WORLD: Received CMSG_BUY_ITEM");
+    DEBUG_LOG("WORLD: Received opcode CMSG_BUY_ITEM");
     ObjectGuid vendorGuid;
     uint32 item, slot, count;
     uint8 unk1;
@@ -707,7 +707,7 @@ void WorldSession::HandleListInventoryOpcode(WorldPacket& recv_data)
     if (!GetPlayer()->isAlive())
         return;
 
-    DEBUG_LOG("WORLD: Recvd CMSG_LIST_INVENTORY");
+    DEBUG_LOG("WORLD: Received opcode CMSG_LIST_INVENTORY");
 
     SendListInventory(guid);
 }
@@ -730,8 +730,7 @@ void WorldSession::SendListInventory(ObjectGuid vendorguid)
         GetPlayer()->RemoveSpellsCausingAura(SPELL_AURA_FEIGN_DEATH);
 
     // Stop the npc if moving
-    if (!pCreature->IsStopped())
-        pCreature->StopMoving();
+    pCreature->StopMoving();
 
     VendorItemData const* vItems = pCreature->GetVendorItems();
     VendorItemData const* tItems = pCreature->GetVendorTemplateItems();
@@ -783,6 +782,9 @@ void WorldSession::SendListInventory(ObjectGuid vendorguid)
                         continue;
 
                     if ((pProto->AllowableRace & _player->getRaceMask()) == 0)
+                        continue;
+
+                    if (crItem->conditionId && !sObjectMgr.IsPlayerMeetToCondition(crItem->conditionId, _player, pCreature->GetMap(), pCreature, CONDITION_FROM_VENDOR))
                         continue;
                 }
 
@@ -876,7 +878,6 @@ void WorldSession::HandleAutoStoreBagItemOpcode(WorldPacket& recv_data)
     _player->RemoveItem(srcbag, srcslot, true);
     _player->StoreItem(dest, pItem, true);
 }
-
 
 bool WorldSession::CheckBanker(ObjectGuid guid)
 {
@@ -1319,7 +1320,6 @@ void WorldSession::HandleSocketOpcode(WorldPacket& recv_data)
                         }
                     }
                 }
-
             }
         }
 

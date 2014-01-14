@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -52,7 +52,7 @@ void WorldSession::HandleDuelAcceptedOpcode(WorldPacket& recvPacket)
 
 void WorldSession::HandleDuelCancelledOpcode(WorldPacket& recvPacket)
 {
-    // DEBUG_LOG( "WORLD: received CMSG_DUEL_CANCELLED" );
+    DEBUG_LOG("WORLD: Received opcode CMSG_DUEL_CANCELLED");
 
     // no duel requested
     if (!GetPlayer()->duel)

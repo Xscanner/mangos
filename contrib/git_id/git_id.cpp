@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -458,6 +458,14 @@ bool find_sql_updates()
 
     pclose(cmd_pipe);
 
+    // Add last milestone's file information
+    last_sql_rev[0] = 11785;
+    last_sql_nr[0] = 2;
+    sscanf("11785_02_characters_instance", "%s", last_sql_update[0]);
+    last_sql_rev[2] = 10008;
+    last_sql_nr[2] = 1;
+    sscanf("10008_01_realmd_realmd_db_version", "%s", last_sql_update[2]);
+
     // remove updates from the last commit also found on origin
     snprintf(cmd, MAX_CMD, "git show %s:%s", origin_hash, sql_update_dir);
     if( (cmd_pipe = popen( cmd, "r" )) == NULL )
@@ -632,7 +640,7 @@ bool generate_sql_makefile()
     if(!fout) { pclose(cmd_pipe); return false; }
 
     fprintf(fout,
-        "# Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>\n"
+        "# This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information\n"
         "#\n"
         "# This program is free software; you can redistribute it and/or modify\n"
         "# it under the terms of the GNU General Public License as published by\n"
@@ -726,7 +734,7 @@ bool change_sql_database()
             fputs(buffer, fout);
         }
 
-        fprintf(fout, "  `required_%s` bit(1) default NULL\n", last_sql_update[i]);
+        fprintf(fout, "  `required_%s` bit(1) DEFAULT NULL\n", last_sql_update[i]);
         while(fgets(buffer, MAX_BUF, fin))
             fputs(buffer, fout);
 

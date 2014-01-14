@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -34,6 +34,7 @@
 #include "Util.h"
 #include "Formulas.h"
 #include "GridNotifiersImpl.h"
+#include "Chat.h"
 
 namespace MaNGOS
 {
@@ -56,26 +57,12 @@ namespace MaNGOS
                     vsnprintf(str, 2048, text, ap);
                     va_end(ap);
 
-                    do_helper(data, &str[0]);
+                    ChatHandler::BuildChatPacket(data, i_msgtype, &str[0], LANG_UNIVERSAL, CHAT_TAG_NONE, i_source ? i_source ->GetObjectGuid() : ObjectGuid(), i_source ? i_source ->GetName() : "");
                 }
                 else
-                    do_helper(data, text);
+                    ChatHandler::BuildChatPacket(data, i_msgtype, text, LANG_UNIVERSAL, CHAT_TAG_NONE, i_source ? i_source ->GetObjectGuid() : ObjectGuid(), i_source ? i_source ->GetName() : "");
             }
         private:
-            void do_helper(WorldPacket& data, char const* text)
-            {
-                ObjectGuid targetGuid = i_source ? i_source ->GetObjectGuid() : ObjectGuid();
-
-                data << uint8(i_msgtype);
-                data << uint32(LANG_UNIVERSAL);
-                data << ObjectGuid(targetGuid);             // there 0 for BG messages
-                data << uint32(0);                          // can be chat msg group or something
-                data << ObjectGuid(targetGuid);
-                data << uint32(strlen(text) + 1);
-                data << text;
-                data << uint8(i_source ? i_source->GetChatTag() : uint8(CHAT_TAG_NONE));
-            }
-
             ChatMsg i_msgtype;
             int32 i_textId;
             Player const* i_source;
@@ -85,7 +72,7 @@ namespace MaNGOS
     class BattleGroundYellBuilder
     {
         public:
-            BattleGroundYellBuilder(uint32 language, int32 textId, Creature const* source, va_list* args = NULL)
+            BattleGroundYellBuilder(Language language, int32 textId, Creature const* source, va_list* args = NULL)
                 : i_language(language), i_textId(textId), i_source(source), i_args(args) {}
             void operator()(WorldPacket& data, int32 loc_idx)
             {
@@ -101,33 +88,17 @@ namespace MaNGOS
                     vsnprintf(str, 2048, text, ap);
                     va_end(ap);
 
-                    do_helper(data, &str[0]);
+                    ChatHandler::BuildChatPacket(data, CHAT_MSG_MONSTER_YELL, &str[0], i_language, CHAT_TAG_NONE, i_source->GetObjectGuid(), i_source->GetName());
                 }
                 else
-                    do_helper(data, text);
+                    ChatHandler::BuildChatPacket(data, CHAT_MSG_MONSTER_YELL, text, i_language, CHAT_TAG_NONE, i_source->GetObjectGuid(), i_source->GetName());
             }
         private:
-            void do_helper(WorldPacket& data, char const* text)
-            {
-                // copyied from BuildMonsterChat
-                data << uint8(CHAT_MSG_MONSTER_YELL);
-                data << uint32(i_language);
-                data << ObjectGuid(i_source->GetObjectGuid());
-                data << uint32(0);                          // 2.1.0
-                data << uint32(strlen(i_source->GetName()) + 1);
-                data << i_source->GetName();
-                data << ObjectGuid();                       // Unit Target - isn't important for bgs
-                data << uint32(strlen(text) + 1);
-                data << text;
-                data << uint8(0);                           // ChatTag - for bgs allways 0?
-            }
-
-            uint32 i_language;
+            Language i_language;
             int32 i_textId;
             Creature const* i_source;
             va_list* i_args;
     };
-
 
     class BattleGround2ChatBuilder
     {
@@ -143,19 +114,16 @@ namespace MaNGOS
                 char str [2048];
                 snprintf(str, 2048, text, arg1str, arg2str);
 
-                ObjectGuid targetGuid = i_source  ? i_source ->GetObjectGuid() : ObjectGuid();
-
-                data << uint8(i_msgtype);
-                data << uint32(LANG_UNIVERSAL);
-                data << ObjectGuid(targetGuid);             // there 0 for BG messages
-                data << uint32(0);                          // can be chat msg group or something
-                data << ObjectGuid(targetGuid);
-                data << uint32(strlen(str) + 1);
-                data << str;
-                data << uint8(i_source ? i_source->GetChatTag() : uint8(CHAT_TAG_NONE));
+                ObjectGuid guid;
+                char const* pName = NULL;
+                if (i_source)
+                {
+                    guid = i_source->GetObjectGuid();
+                    pName = i_source->GetName();
+                } 
+                ChatHandler::BuildChatPacket(data, i_msgtype, str, LANG_UNIVERSAL, CHAT_TAG_NONE, ObjectGuid(), NULL, guid, pName);
             }
         private:
-
             ChatMsg i_msgtype;
             int32 i_textId;
             Player const* i_source;
@@ -176,17 +144,8 @@ namespace MaNGOS
 
                 char str [2048];
                 snprintf(str, 2048, text, arg1str, arg2str);
-                // copyied from BuildMonsterChat
-                data << uint8(CHAT_MSG_MONSTER_YELL);
-                data << uint32(i_language);
-                data << ObjectGuid(i_source->GetObjectGuid());
-                data << uint32(0);                          // 2.1.0
-                data << uint32(strlen(i_source->GetName()) + 1);
-                data << i_source->GetName();
-                data << ObjectGuid();                       // Unit Target - isn't important for bgs
-                data << uint32(strlen(str) + 1);
-                data << str;
-                data << uint8(0);                           // ChatTag - for bgs allways 0?
+
+                ChatHandler::BuildChatPacket(data, CHAT_MSG_MONSTER_YELL, str, LANG_UNIVERSAL, CHAT_TAG_NONE, i_source ? i_source ->GetObjectGuid() : ObjectGuid(), i_source ? i_source ->GetName() : "");
             }
         private:
 
@@ -221,7 +180,6 @@ BattleGround::BattleGround()
     m_StartTime         = 0;
     m_Events            = 0;
     m_IsRated           = false;
-    m_BuffChange        = false;
     m_Name              = "";
     m_LevelMin          = 0;
     m_LevelMax          = 0;
@@ -280,11 +238,6 @@ BattleGround::~BattleGround()
 {
     // remove objects and creatures
     // (this is done automatically in mapmanager update, when the instance is reset after the reset time)
-
-    int size = m_BgObjects.size();
-    for (int i = 0; i < size; ++i)
-        DelObject(i);
-
     sBattleGroundMgr.RemoveBattleGround(GetInstanceID(), GetTypeID());
 
     // skip template bgs as they were never added to visible bg list
@@ -380,7 +333,6 @@ void BattleGround::Update(uint32 diff)
             }
             m_PrematureCountDownTimer = newtime;
         }
-
     }
     else if (m_PrematureCountDown)
         m_PrematureCountDown = false;
@@ -409,13 +361,6 @@ void BattleGround::Update(uint32 diff)
         if (!(m_Events & BG_STARTING_EVENT_1))
         {
             m_Events |= BG_STARTING_EVENT_1;
-
-            // setup here, only when at least one player has ported to the map
-            if (!SetupBattleGround())
-            {
-                EndNow();
-                return;
-            }
 
             StartingEventCloseDoors();
             SetStartDelayTime(m_StartDelayTimes[BG_STARTING_EVENT_FIRST]);
@@ -459,7 +404,6 @@ void BattleGround::Update(uint32 diff)
             }
             else
             {
-
                 PlaySoundToAll(SOUND_BG_START);
 
                 for (BattleGroundPlayerMap::const_iterator itr = m_Players.begin(); itr != m_Players.end(); ++itr)
@@ -810,7 +754,7 @@ void BattleGround::EndBattleGround(Team winner)
         plr->GetSession()->SendPacket(&data);
 
         BattleGroundQueueTypeId bgQueueTypeId = BattleGroundMgr::BGQueueTypeId(GetTypeID(), GetArenaType());
-        sBattleGroundMgr.BuildBattleGroundStatusPacket(&data, this, plr->GetBattleGroundQueueIndex(bgQueueTypeId), STATUS_IN_PROGRESS, TIME_TO_AUTOREMOVE, GetStartTime(), GetArenaType());
+        sBattleGroundMgr.BuildBattleGroundStatusPacket(&data, this, plr->GetBattleGroundQueueIndex(bgQueueTypeId), STATUS_IN_PROGRESS, TIME_TO_AUTOREMOVE, GetStartTime(), GetArenaType(), plr->GetBGTeam());
         plr->GetSession()->SendPacket(&data);
         plr->GetAchievementMgr().UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_COMPLETE_BATTLEGROUND, 1);
     }
@@ -1056,7 +1000,7 @@ void BattleGround::RemovePlayerAtLeave(ObjectGuid guid, bool Transport, bool Sen
             if (SendPacket)
             {
                 WorldPacket data;
-                sBattleGroundMgr.BuildBattleGroundStatusPacket(&data, this, plr->GetBattleGroundQueueIndex(bgQueueTypeId), STATUS_NONE, 0, 0, ARENA_TYPE_NONE);
+                sBattleGroundMgr.BuildBattleGroundStatusPacket(&data, this, plr->GetBattleGroundQueueIndex(bgQueueTypeId), STATUS_NONE, 0, 0, ARENA_TYPE_NONE, TEAM_NONE);
                 plr->GetSession()->SendPacket(&data);
             }
 
@@ -1387,48 +1331,6 @@ void BattleGround::UpdatePlayerScore(Player* Source, uint32 type, uint32 value)
     }
 }
 
-bool BattleGround::AddObject(uint32 type, uint32 entry, float x, float y, float z, float o, float rotation0, float rotation1, float rotation2, float rotation3, uint32 /*respawnTime*/)
-{
-    // must be created this way, adding to godatamap would add it to the base map of the instance
-    // and when loading it (in go::LoadFromDB()), a new guid would be assigned to the object, and a new object would be created
-    // so we must create it specific for this instance
-    GameObject* go = new GameObject;
-    if (!go->Create(GetBgMap()->GenerateLocalLowGuid(HIGHGUID_GAMEOBJECT), entry, GetBgMap(),
-                    PHASEMASK_NORMAL, x, y, z, o, QuaternionData(rotation0, rotation1, rotation2, rotation3)))
-    {
-        sLog.outErrorDb("Gameobject template %u not found in database! BattleGround not created!", entry);
-        sLog.outError("Cannot create gameobject template %u! BattleGround not created!", entry);
-        delete go;
-        return false;
-    }
-    /*
-        uint32 guid = go->GetGUIDLow();
-
-        // without this, UseButtonOrDoor caused the crash, since it tried to get go info from godata
-        // iirc that was changed, so adding to go data map is no longer required if that was the only function using godata from GameObject without checking if it existed
-        GameObjectData& data = sObjectMgr.NewGOData(guid);
-
-        data.id             = entry;
-        data.mapid          = GetMapId();
-        data.posX           = x;
-        data.posY           = y;
-        data.posZ           = z;
-        data.orientation    = o;
-        data.rotation0      = rotation0;
-        data.rotation1      = rotation1;
-        data.rotation2      = rotation2;
-        data.rotation3      = rotation3;
-        data.spawntimesecs  = respawnTime;
-        data.spawnMask      = 1;
-        data.animprogress   = 100;
-        data.go_state       = 1;
-    */
-    // add to world, so it can be later looked up from HashMapHolder
-    go->AddToWorld();
-    m_BgObjects[type] = go->GetObjectGuid();
-    return true;
-}
-
 // some doors aren't despawned so we cannot handle their closing in gameobject::update()
 // it would be nice to correctly implement GO_ACTIVATED state and open/close doors in gameobject code
 void BattleGround::DoorClose(ObjectGuid guid)
@@ -1597,24 +1499,6 @@ void BattleGround::SpawnBGCreature(ObjectGuid guid, uint32 respawntime)
     }
 }
 
-bool BattleGround::DelObject(uint32 type)
-{
-    if (!m_BgObjects[type])
-        return true;
-
-    GameObject* obj = GetBgMap()->GetGameObject(m_BgObjects[type]);
-    if (!obj)
-    {
-        sLog.outError("Can't find gobject: %s", m_BgObjects[type].GetString().c_str());
-        return false;
-    }
-
-    obj->SetRespawnTime(0);                                 // not save respawn time
-    obj->Delete();
-    m_BgObjects[type].Clear();
-    return true;
-}
-
 void BattleGround::SendMessageToAll(int32 entry, ChatMsg type, Player const* source)
 {
     MaNGOS::BattleGroundChatBuilder bg_builder(type, entry, source);
@@ -1627,7 +1511,7 @@ void BattleGround::SendYellToAll(int32 entry, uint32 language, ObjectGuid guid)
     Creature* source = GetBgMap()->GetCreature(guid);
     if (!source)
         return;
-    MaNGOS::BattleGroundYellBuilder bg_builder(language, entry, source);
+    MaNGOS::BattleGroundYellBuilder bg_builder(Language(language), entry, source);
     MaNGOS::LocalizedPacketDo<MaNGOS::BattleGroundYellBuilder> bg_do(bg_builder);
     BroadcastWorker(bg_do);
 }
@@ -1679,45 +1563,8 @@ void BattleGround::HandleTriggerBuff(ObjectGuid go_guid)
     if (!obj || obj->GetGoType() != GAMEOBJECT_TYPE_TRAP || !obj->isSpawned())
         return;
 
-    // static buffs are already handled just by database and don't need
-    // battleground code
-    if (!m_BuffChange)
-    {
-        obj->SetLootState(GO_JUST_DEACTIVATED);             // can be despawned or destroyed
-        return;
-    }
-
-    // change buff type, when buff is used:
-    // TODO this can be done when poolsystem works for instances
-    int32 index = m_BgObjects.size() - 1;
-    while (index >= 0 && m_BgObjects[index] != go_guid)
-        --index;
-    if (index < 0)
-    {
-        sLog.outError("BattleGround (Type: %u) has buff trigger %s GOType: %u but it hasn't that object in its internal data",
-                      GetTypeID(), go_guid.GetString().c_str(), obj->GetGoType());
-        return;
-    }
-
-    // randomly select new buff
-    uint8 buff = urand(0, 2);
-    uint32 entry = obj->GetEntry();
-    if (m_BuffChange && entry != Buff_Entries[buff])
-    {
-        // despawn current buff
-        SpawnBGObject(m_BgObjects[index], RESPAWN_ONE_DAY);
-        // set index for new one
-        for (uint8 currBuffTypeIndex = 0; currBuffTypeIndex < 3; ++currBuffTypeIndex)
-        {
-            if (entry == Buff_Entries[currBuffTypeIndex])
-            {
-                index -= currBuffTypeIndex;
-                index += buff;
-            }
-        }
-    }
-
-    SpawnBGObject(m_BgObjects[index], BUFF_RESPAWN_TIME);
+    obj->SetLootState(GO_JUST_DEACTIVATED);             // can be despawned or destroyed
+    return;
 }
 
 void BattleGround::HandleKillPlayer(Player* player, Player* killer)
@@ -1779,7 +1626,7 @@ void BattleGround::PlayerAddedToBGCheckIfBGIsRunning(Player* plr)
     sBattleGroundMgr.BuildPvpLogDataPacket(&data, this);
     plr->GetSession()->SendPacket(&data);
 
-    sBattleGroundMgr.BuildBattleGroundStatusPacket(&data, this, plr->GetBattleGroundQueueIndex(bgQueueTypeId), STATUS_IN_PROGRESS, GetEndTime(), GetStartTime(), GetArenaType());
+    sBattleGroundMgr.BuildBattleGroundStatusPacket(&data, this, plr->GetBattleGroundQueueIndex(bgQueueTypeId), STATUS_IN_PROGRESS, GetEndTime(), GetStartTime(), GetArenaType(), plr->GetBGTeam());
     plr->GetSession()->SendPacket(&data);
 }
 

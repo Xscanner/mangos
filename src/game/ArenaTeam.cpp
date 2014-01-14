@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -63,7 +63,6 @@ ArenaTeam::ArenaTeam()
 
 ArenaTeam::~ArenaTeam()
 {
-
 }
 
 bool ArenaTeam::Create(ObjectGuid captainGuid, ArenaType type, std::string arenaTeamName)
@@ -779,4 +778,24 @@ bool ArenaTeam::IsFighting() const
         }
     }
     return false;
+}
+
+// add new arena event to all already connected team members
+void ArenaTeam::MassInviteToEvent(WorldSession* session)
+{
+    WorldPacket data(SMSG_CALENDAR_ARENA_TEAM);
+
+    data << uint32(m_members.size());
+
+    for (MemberList::const_iterator itr = m_members.begin(); itr != m_members.end(); ++itr)
+    {
+        uint32 level = Player::GetLevelFromDB(itr->guid);
+
+        if (itr->guid != session->GetPlayer()->GetObjectGuid())
+        {
+            data << itr->guid.WriteAsPacked();
+            data << uint8(level);
+        }
+    }
+    session->SendPacket(&data);
 }

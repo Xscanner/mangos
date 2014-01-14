@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -168,7 +168,7 @@ class SQLHashStorage : public SQLStorageBase
         void Free() override;
 
     private:
-        typedef UNORDERED_MAP<uint32/*recordId*/, char* /*record*/> RecordMap;
+        typedef UNORDERED_MAP<uint32 /*recordId*/, char* /*record*/> RecordMap;
         RecordMap m_indexMap;
 };
 
@@ -179,7 +179,7 @@ class SQLMultiStorage : public SQLStorageBase
     template<typename T> friend class SQLMSIteratorBounds;
 
     private:
-        typedef std::multimap<uint32/*recordId*/, char* /*record*/> RecordMultiMap;
+        typedef std::multimap<uint32 /*recordId*/, char* /*record*/> RecordMultiMap;
 
     public:
         SQLMultiStorage(const char* fmt, const char* _entry_field, const char* sqlname);
@@ -187,10 +187,14 @@ class SQLMultiStorage : public SQLStorageBase
 
         ~SQLMultiStorage() { Free(); }
 
+        // forward declaration
+        template<typename T> class SQLMSIteratorBounds;
+
         template<typename T>
         class SQLMultiSIterator
         {
             friend class SQLMultiStorage;
+            friend class SQLMSIteratorBounds<T>;
 
             public:
                 T const* getValue() const { return reinterpret_cast<T const*>(citerator->second); }
@@ -200,6 +204,7 @@ class SQLMultiStorage : public SQLStorageBase
                 T const* operator *() const { return getValue(); }
                 T const* operator ->() const { return getValue(); }
                 bool operator !=(const SQLMultiSIterator& r) const { return citerator != r.citerator; }
+                bool operator ==(const SQLMultiSIterator& r) const { return citerator == r.citerator; }
 
             private:
                 SQLMultiSIterator(RecordMultiMap::const_iterator _itr) : citerator(_itr) {}

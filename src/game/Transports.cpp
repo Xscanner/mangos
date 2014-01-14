@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -179,7 +179,10 @@ bool Transport::Create(uint32 guidlow, uint32 mapid, float x, float y, float z, 
     SetUInt32Value(GAMEOBJECT_LEVEL, m_period);
     SetEntry(goinfo->id);
 
-    SetDisplayId(goinfo->displayId);
+    //SetDisplayId(goinfo->displayId);
+    // Use SetDisplayId only if we have the GO assigned to a proper map!
+    SetUInt32Value(GAMEOBJECT_DISPLAYID, goinfo->displayId);
+    m_displayInfo = sGameObjectDisplayInfoStore.LookupEntry(goinfo->displayId);
 
     SetGoState(GO_STATE_READY);
     SetGoType(GameobjectTypes(goinfo->type));
@@ -505,7 +508,6 @@ void Transport::Update(uint32 update_diff, uint32 /*p_time*/)
     m_timer = WorldTimer::getMSTime() % m_period;
     while (((m_timer - m_curr->first) % m_pathTime) > ((m_next->first - m_curr->first) % m_pathTime))
     {
-
         DoEventIfAny(*m_curr, true);
 
         MoveToNextWayPoint();

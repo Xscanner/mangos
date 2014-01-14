@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -41,8 +41,9 @@
 #include "Map.h"
 #include "InstanceData.h"
 #include "DBCStructure.h"
+#include "Chat.h"
 
-#include "Policies/SingletonImp.h"
+#include "Policies/Singleton.h"
 
 INSTANTIATE_SINGLETON_1(AchievementGlobalMgr);
 
@@ -57,15 +58,8 @@ namespace MaNGOS
             {
                 char const* text = sObjectMgr.GetMangosString(i_textId, loc_idx);
 
-                data << uint8(i_msgtype);
-                data << uint32(LANG_UNIVERSAL);
-                data << i_player.GetObjectGuid();
-                data << uint32(5);
-                data << i_player.GetObjectGuid();
-                data << uint32(strlen(text) + 1);
-                data << text;
-                data << uint8(0);
-                data << uint32(i_achievementId);
+                ChatHandler::BuildChatPacket(data, i_msgtype, text, LANG_UNIVERSAL, i_player.GetChatTag(),  i_player.GetObjectGuid(), NULL, i_player.GetObjectGuid(), NULL, NULL,
+                    i_achievementId);
             }
 
         private:
@@ -75,7 +69,6 @@ namespace MaNGOS
             uint32 i_achievementId;
     };
 }                                                           // namespace MaNGOS
-
 
 bool AchievementCriteriaRequirement::IsValid(AchievementCriteriaEntry const* criteria)
 {
@@ -609,7 +602,6 @@ void AchievementMgr::LoadFromDB(QueryResult* achievementResult, QueryResult* cri
         while (criteriaResult->NextRow());
         delete criteriaResult;
     }
-
 }
 
 void AchievementMgr::SendAchievementEarned(AchievementEntry const* achievement)
@@ -1133,7 +1125,6 @@ void AchievementMgr::UpdateAchievementCriteria(AchievementCriteriaTypes type, ui
                 change = 1;
                 progressType = PROGRESS_ACCUMULATE;
                 break;
-
             }
             case ACHIEVEMENT_CRITERIA_TYPE_KILLED_BY_CREATURE:
                 // AchievementMgr::UpdateAchievementCriteria might also be called on login - skip in this case
@@ -2682,7 +2673,6 @@ void AchievementGlobalMgr::LoadRewards()
 
         m_achievementRewards.insert(AchievementRewardsMap::value_type(entry, reward));
         ++count;
-
     }
     while (result->NextRow());
 
@@ -2776,7 +2766,6 @@ void AchievementGlobalMgr::LoadRewardLocales()
         }
 
         m_achievementRewardLocales.insert(AchievementRewardLocalesMap::value_type(entry, data));
-
     }
     while (result->NextRow());
 

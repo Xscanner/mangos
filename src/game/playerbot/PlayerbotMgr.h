@@ -32,7 +32,7 @@ public:
     void HandleMasterIncomingPacket(const WorldPacket& packet);
     void HandleMasterOutgoingPacket(const WorldPacket& packet);
 
-    void AddPlayerBot(ObjectGuid guid);
+    void LoginPlayerBot(ObjectGuid guid);
     void LogoutPlayerBot(ObjectGuid guid);
     Player* GetPlayerBot(ObjectGuid guid) const;
     Player* GetMaster() const { return m_master; };
@@ -53,6 +53,7 @@ public:
     bool m_confDisableBots;
     bool m_confDebugWhisper;
     float m_confFollowDistance[2];
+    uint32 gConfigSellLevelDiff;
     bool m_confCollectCombat;
     bool m_confCollectQuest;
     bool m_confCollectProfession;

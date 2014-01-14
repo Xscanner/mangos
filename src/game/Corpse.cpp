@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,7 +27,10 @@
 #include "World.h"
 #include "ObjectMgr.h"
 
-Corpse::Corpse(CorpseType type) : WorldObject()
+Corpse::Corpse(CorpseType type) : WorldObject(),
+    loot(this),
+    lootRecipient(NULL),
+    lootForBody(false)
 {
     m_objectType |= TYPEMASK_CORPSE;
     m_objectTypeId = TYPEID_CORPSE;
@@ -39,8 +42,6 @@ Corpse::Corpse(CorpseType type) : WorldObject()
     m_type = type;
 
     m_time = time(NULL);
-
-    lootForBody = false;
 }
 
 Corpse::~Corpse()

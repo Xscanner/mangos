@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,7 +18,7 @@
 
 #include "ObjectMgr.h"
 #include "Database/DatabaseEnv.h"
-#include "Policies/SingletonImp.h"
+#include "Policies/Singleton.h"
 
 #include "SQLStorages.h"
 #include "Log.h"
@@ -105,8 +105,11 @@ LanguageDesc const* GetLanguageDescByID(uint32 lang)
     return NULL;
 }
 
-bool SpellClickInfo::IsFitToRequirements(Player const* player) const
+bool SpellClickInfo::IsFitToRequirements(Player const* player, Creature const* clickedCreature) const
 {
+    if (conditionId)
+        return sObjectMgr.IsPlayerMeetToCondition(conditionId, player, player->GetMap(), clickedCreature, CONDITION_FROM_SPELLCLICK);
+
     if (questStart)
     {
         // not in expected required quest state
@@ -146,7 +149,8 @@ ObjectMgr::ObjectMgr() :
     m_MailIds("Mail ids"),
     m_PetNumbers("Pet numbers"),
     m_FirstTemporaryCreatureGuid(1),
-    m_FirstTemporaryGameObjectGuid(1)
+    m_FirstTemporaryGameObjectGuid(1),
+    DBCLocaleIndex(LOCALE_enUS)
 {
 }
 
@@ -610,6 +614,18 @@ void ObjectMgr::LoadCreatureTemplates()
         if (!displayScaleEntry)
             sLog.outErrorDb("Creature (Entry: %u) has nonexistent modelid in modelid_1/modelid_2/modelid_3/modelid_4", cInfo->Entry);
 
+        if (!cInfo->minlevel)
+        {
+            sLog.outErrorDb("Creature (Entry: %u) has invalid minlevel, set to 1", cInfo->Entry);
+            const_cast<CreatureInfo*>(cInfo)->minlevel = 1;
+        }
+
+        if (cInfo->minlevel > cInfo->maxlevel)
+        {
+            sLog.outErrorDb("Creature (Entry: %u) has invalid maxlevel, set to minlevel", cInfo->Entry);
+            const_cast<CreatureInfo*>(cInfo)->maxlevel = cInfo->minlevel;
+        }
+
         // use below code for 0-checks for unit_class
         if (!cInfo->unit_class)
             ERROR_DB_STRICT_LOG("Creature (Entry: %u) not has proper unit_class(%u) for creature_template", cInfo->Entry, cInfo->unit_class);
@@ -745,6 +761,26 @@ void ObjectMgr::ConvertCreatureAddonAuras(CreatureDataAddon* addon, char const* 
         if (!AdditionalSpellInfo)
         {
             sLog.outErrorDb("Creature (%s: %u) has wrong spell %u defined in `auras` field in `%s`.", guidEntryStr, addon->guidOrEntry, cAura, table);
+            continue;
+        }
+
+        // Must be Aura, but also allow dummy/script effect spells, as they are used sometimes to select a random aura or similar
+        if (!IsSpellAppliesAura(AdditionalSpellInfo) && !IsSpellHaveEffect(AdditionalSpellInfo, SPELL_EFFECT_DUMMY) && !IsSpellHaveEffect(AdditionalSpellInfo, SPELL_EFFECT_SCRIPT_EFFECT) && !IsSpellHaveEffect(AdditionalSpellInfo, SPELL_EFFECT_TRIGGER_SPELL))
+        {
+            sLog.outErrorDb("Creature (%s: %u) has spell %u defined in `auras` field in `%s, but spell doesn't apply an aura`.", guidEntryStr, addon->guidOrEntry, cAura, table);
+            continue;
+        }
+
+        // TODO: Remove LogFilter check after more research
+        if (!sLog.HasLogFilter(LOG_FILTER_DB_STRICTED_CHECK) && !IsOnlySelfTargeting(AdditionalSpellInfo))
+        {
+            sLog.outErrorDb("Creature (%s: %u) has spell %u defined in `auras` field in `%s, but spell is no self-only spell`.", guidEntryStr, addon->guidOrEntry, cAura, table);
+            continue;
+        }
+
+        if (IsSpellHaveAura(AdditionalSpellInfo, SPELL_AURA_CONTROL_VEHICLE))
+        {
+            sLog.outErrorDb("Creature (%s: %u) has spell %u defined in `auras` field in `%s, but vehicle control spells are not suitable for _addon.auras handling`.", guidEntryStr, addon->guidOrEntry, cAura, table);
             continue;
         }
 
@@ -1021,7 +1057,6 @@ void ObjectMgr::LoadCreatureModelInfo()
         }
         else
             sLog.outErrorDb("Table `creature_model_info` expect have data for character race %u male model id %u", race, raceEntry->model_m);
-
     }
 
     sLog.outString(">> Loaded %u creature model based info", sCreatureModelStorage.GetRecordCount());
@@ -1326,7 +1361,6 @@ void ObjectMgr::LoadCreatures()
             AddCreatureToGrid(guid, &data);
 
         ++count;
-
     }
     while (result->NextRow());
 
@@ -1520,8 +1554,11 @@ void ObjectMgr::LoadGameObjects()
         if (gameEvent == 0 && GuidPoolId == 0 && EntryPoolId == 0) // if not this is to be managed by GameEvent System or Pool system
             AddGameobjectToGrid(guid, &data);
 
-        ++count;
+        //uint32 zoneId, areaId;
+        //sTerrainMgr.LoadTerrain(data.mapid)->GetZoneAndAreaId(zoneId, areaId, data.posX, data.posY, data.posZ);
+        //sLog.outErrorDb("UPDATE gameobject SET zone_id=%u, area_id=%u WHERE guid=%u;", zoneId, areaId, guid);
 
+        ++count;
     }
     while (result->NextRow());
 
@@ -2527,7 +2564,7 @@ void ObjectMgr::LoadItemRequiredTarget()
             {
                 if (pItemProto->Spells[i].SpellTrigger == ITEM_SPELLTRIGGER_ON_USE)
                 {
-                    SpellScriptTargetBounds bounds = sSpellMgr.GetSpellScriptTargetBounds(pSpellInfo->Id);
+                    SQLMultiStorage::SQLMSIteratorBounds<SpellTargetEntry> bounds = sSpellScriptTargetStorage.getBounds<SpellTargetEntry>(pSpellInfo->Id);
                     if (bounds.first != bounds.second)
                         break;
 
@@ -3175,11 +3212,11 @@ void ObjectMgr::LoadPlayerInfo()
                 continue;
 
             // skip expansion races if not playing with expansion
-            if (sWorld.getConfig(CONFIG_UINT32_EXPANSION) < 1 && (race == RACE_BLOODELF || race == RACE_DRAENEI))
+            if (sWorld.getConfig(CONFIG_UINT32_EXPANSION) < EXPANSION_TBC && (race == RACE_BLOODELF || race == RACE_DRAENEI))
                 continue;
 
             // skip expansion classes if not playing with expansion
-            if (sWorld.getConfig(CONFIG_UINT32_EXPANSION) < 2 && class_ == CLASS_DEATH_KNIGHT)
+            if (sWorld.getConfig(CONFIG_UINT32_EXPANSION) < EXPANSION_WOTLK && class_ == CLASS_DEATH_KNIGHT)
                 continue;
 
             // fatal error if no level 1 data
@@ -3401,7 +3438,6 @@ void ObjectMgr::LoadArenaTeams()
 
     if (!result)
     {
-
         BarGoLink bar(1);
 
         bar.step();
@@ -3421,7 +3457,6 @@ void ObjectMgr::LoadArenaTeams()
 
     do
     {
-
         bar.step();
         ++count;
 
@@ -4285,15 +4320,13 @@ void ObjectMgr::LoadQuests()
             if (!quest)
                 continue;
 
-            if (!quest->HasSpecialFlag(QUEST_SPECIAL_FLAG_EXPLORATION_OR_EVENT))
+            // Exclude false positive of quest 10162
+            if (!quest->HasSpecialFlag(QUEST_SPECIAL_FLAG_EXPLORATION_OR_EVENT) && spellInfo->Id != 33824 && quest_id != 10162)
             {
                 sLog.outErrorDb("Spell (id: %u) have SPELL_EFFECT_QUEST_COMPLETE for quest %u , but quest does not have SpecialFlags QUEST_SPECIAL_FLAG_EXPLORATION_OR_EVENT (2) set. Quest SpecialFlags should be corrected to enable this objective.", spellInfo->Id, quest_id);
 
-                // The below forced alteration has been disabled because of spell 33824 / quest 10162.
-                // A startup error will still occur with proper data in quest_template, but it will be possible to sucessfully complete the quest with the expected data.
-
                 // this will prevent quest completing without objective
-                // const_cast<Quest*>(quest)->SetSpecialFlag(QUEST_SPECIAL_FLAG_EXPLORATION_OR_EVENT);
+                const_cast<Quest*>(quest)->SetSpecialFlag(QUEST_SPECIAL_FLAG_EXPLORATION_OR_EVENT);
             }
         }
     }
@@ -4548,7 +4581,6 @@ void ObjectMgr::LoadPageTextLocales()
                 data.Text[idx] = str;
             }
         }
-
     }
     while (result->NextRow());
 
@@ -4622,7 +4654,6 @@ void ObjectMgr::LoadInstanceEncounters()
         uint32 lastEncounterDungeon = fields[3].GetUInt32();
 
         m_DungeonEncounters.insert(DungeonEncounterMap::value_type(creditEntry, new DungeonEncounter(dungeonEncounter, EncounterCreditType(creditType), creditEntry, lastEncounterDungeon)));
-
     }
     while (result->NextRow());
 
@@ -5070,7 +5101,6 @@ void ObjectMgr::LoadQuestAreaTriggers()
         }
 
         mQuestAreaTriggerMap[trigger_ID] = quest_ID;
-
     }
     while (result->NextRow());
 
@@ -5471,7 +5501,6 @@ void ObjectMgr::LoadAreaTriggerTeleports()
     QueryResult* result = WorldDatabase.Query("SELECT id, required_level, required_item, required_item2, heroic_key, heroic_key2, required_quest_done, required_quest_done_heroic, target_map, target_position_x, target_position_y, target_position_z, target_orientation FROM areatrigger_teleport");
     if (!result)
     {
-
         BarGoLink bar(1);
 
         bar.step();
@@ -5589,7 +5618,6 @@ void ObjectMgr::LoadAreaTriggerTeleports()
         }
 
         mAreaTriggers[Trigger_ID] = at;
-
     }
     while (result->NextRow());
 
@@ -5904,7 +5932,6 @@ void ObjectMgr::LoadGameObjectLocales()
                 }
             }
         }
-
     }
     while (result->NextRow());
 
@@ -5914,7 +5941,7 @@ void ObjectMgr::LoadGameObjectLocales()
     sLog.outString(">> Loaded " SIZEFMTD " gameobject locale strings", mGameObjectLocaleMap.size());
 }
 
-struct SQLGameObjectLoader : public SQLStorageLoaderBase<SQLGameObjectLoader, SQLStorage>
+struct SQLGameObjectLoader : public SQLStorageLoaderBase<SQLGameObjectLoader, SQLHashStorage>
 {
     template<class D>
     void convert_from_str(uint32 /*field_pos*/, char const* src, D& dst)
@@ -6754,8 +6781,8 @@ void ObjectMgr::LoadNPCSpellClickSpells()
     uint32 count = 0;
 
     mSpellClickInfoMap.clear();
-    //                                                0          1         2            3                   4          5
-    QueryResult* result = WorldDatabase.Query("SELECT npc_entry, spell_id, quest_start, quest_start_active, quest_end, cast_flags FROM npc_spellclick_spells");
+    //                                                0          1         2            3                   4          5           6
+    QueryResult* result = WorldDatabase.Query("SELECT npc_entry, spell_id, quest_start, quest_start_active, quest_end, cast_flags, condition_id FROM npc_spellclick_spells");
 
     if (!result)
     {
@@ -6775,7 +6802,15 @@ void ObjectMgr::LoadNPCSpellClickSpells()
         Field* fields = result->Fetch();
         bar.step();
 
-        uint32 npc_entry = fields[0].GetUInt32();
+        SpellClickInfo info;
+        uint32 npc_entry         = fields[0].GetUInt32();
+        info.spellId             = fields[1].GetUInt32();
+        info.questStart          = fields[2].GetUInt32();
+        info.questStartCanActive = fields[3].GetBool();
+        info.questEnd            = fields[4].GetUInt32();
+        info.castFlags           = fields[5].GetUInt8();
+        info.conditionId         = fields[6].GetUInt16();
+
         CreatureInfo const* cInfo = GetCreatureTemplate(npc_entry);
         if (!cInfo)
         {
@@ -6783,48 +6818,35 @@ void ObjectMgr::LoadNPCSpellClickSpells()
             continue;
         }
 
-        uint32 spellid = fields[1].GetUInt32();
-        SpellEntry const* spellinfo = sSpellStore.LookupEntry(spellid);
+        SpellEntry const* spellinfo = sSpellStore.LookupEntry(info.spellId);
         if (!spellinfo)
         {
-            sLog.outErrorDb("Table npc_spellclick_spells references unknown spellid %u. Skipping entry.", spellid);
+            sLog.outErrorDb("Table npc_spellclick_spells references unknown spellid %u. Skipping entry.", info.spellId);
             continue;
         }
 
-        uint32 quest_start = fields[2].GetUInt32();
-
-        // quest might be 0 to enable spellclick independent of any quest
-        if (quest_start)
+        if (info.conditionId && !sConditionStorage.LookupEntry<PlayerCondition const*>(info.conditionId))
         {
-            if (mQuestTemplates.find(quest_start) == mQuestTemplates.end())
+            sLog.outErrorDb("Table npc_spellclick_spells references unknown condition %u. Skipping entry.", info.conditionId);
+            continue;
+        }
+        else if (!info.conditionId)                         // TODO Drop block after finished converting
+        {
+            // quest might be 0 to enable spellclick independent of any quest
+            if (info.questStart && mQuestTemplates.find(info.questStart) == mQuestTemplates.end())
             {
-                sLog.outErrorDb("Table npc_spellclick_spells references unknown start quest %u. Skipping entry.", quest_start);
+                sLog.outErrorDb("Table npc_spellclick_spells references unknown start quest %u. Skipping entry.", info.questStart);
                 continue;
             }
 
-        }
-
-        bool quest_start_active = fields[3].GetBool();
-
-        uint32 quest_end = fields[4].GetUInt32();
-        // quest might be 0 to enable spellclick active infinity after start quest
-        if (quest_end)
-        {
-            if (mQuestTemplates.find(quest_end) == mQuestTemplates.end())
+            // quest might be 0 to enable spellclick active infinity after start quest
+            if (info.questEnd && mQuestTemplates.find(info.questEnd) == mQuestTemplates.end())
             {
-                sLog.outErrorDb("Table npc_spellclick_spells references unknown end quest %u. Skipping entry.", quest_end);
+                sLog.outErrorDb("Table npc_spellclick_spells references unknown end quest %u. Skipping entry.", info.questEnd);
                 continue;
             }
-
         }
 
-        uint8 castFlags = fields[5].GetUInt8();
-        SpellClickInfo info;
-        info.spellId = spellid;
-        info.questStart = quest_start;
-        info.questStartCanActive = quest_start_active;
-        info.questEnd = quest_end;
-        info.castFlags = castFlags;
         mSpellClickInfoMap.insert(SpellClickInfoMap::value_type(npc_entry, info));
 
         // mark creature template as spell clickable
@@ -7329,25 +7351,21 @@ void ObjectMgr::LoadGameObjectForQuests()
         return;
     }
 
-    BarGoLink bar(sGOStorage.GetMaxEntry() - 1);
+    BarGoLink bar(sGOStorage.GetRecordCount());
     uint32 count = 0;
 
     // collect GO entries for GO that must activated
-    for (uint32 go_entry = 1; go_entry < sGOStorage.GetMaxEntry(); ++go_entry)
+    for (SQLStorageBase::SQLSIterator<GameObjectInfo> itr = sGOStorage.getDataBegin<GameObjectInfo>(); itr < sGOStorage.getDataEnd<GameObjectInfo>(); ++itr)
     {
         bar.step();
-        GameObjectInfo const* goInfo = GetGameObjectInfo(go_entry);
-        if (!goInfo)
-            continue;
-
-        switch (goInfo->type)
+        switch (itr->type)
         {
             case GAMEOBJECT_TYPE_QUESTGIVER:
             {
-                if (m_GOQuestRelations.find(go_entry) != m_GOQuestRelations.end() ||
-                        m_GOQuestInvolvedRelations.find(go_entry) != m_GOQuestInvolvedRelations.end())
+                if (m_GOQuestRelations.find(itr->id) != m_GOQuestRelations.end() ||
+                        m_GOQuestInvolvedRelations.find(itr->id) != m_GOQuestInvolvedRelations.end())
                 {
-                    mGameObjectForQuestSet.insert(go_entry);
+                    mGameObjectForQuestSet.insert(itr->id);
                     ++count;
                 }
 
@@ -7356,39 +7374,39 @@ void ObjectMgr::LoadGameObjectForQuests()
             case GAMEOBJECT_TYPE_CHEST:
             {
                 // scan GO chest with loot including quest items
-                uint32 loot_id = goInfo->GetLootId();
+                uint32 loot_id = itr->GetLootId();
 
                 // always activate to quest, GO may not have loot, OR find if GO has loot for quest.
-                if (goInfo->chest.questId || LootTemplates_Gameobject.HaveQuestLootFor(loot_id))
+                if (itr->chest.questId || LootTemplates_Gameobject.HaveQuestLootFor(loot_id))
                 {
-                    mGameObjectForQuestSet.insert(go_entry);
+                    mGameObjectForQuestSet.insert(itr->id);
                     ++count;
                 }
                 break;
             }
             case GAMEOBJECT_TYPE_GENERIC:
             {
-                if (goInfo->_generic.questID)               // quest related objects, has visual effects
+                if (itr->_generic.questID)                  // quest related objects, has visual effects
                 {
-                    mGameObjectForQuestSet.insert(go_entry);
+                    mGameObjectForQuestSet.insert(itr->id);
                     ++count;
                 }
                 break;
             }
             case GAMEOBJECT_TYPE_SPELL_FOCUS:
             {
-                if (goInfo->spellFocus.questID)             // quest related objects, has visual effect
+                if (itr->spellFocus.questID)                // quest related objects, has visual effect
                 {
-                    mGameObjectForQuestSet.insert(go_entry);
+                    mGameObjectForQuestSet.insert(itr->id);
                     ++count;
                 }
                 break;
             }
             case GAMEOBJECT_TYPE_GOOBER:
             {
-                if (goInfo->goober.questId)                 // quests objects
+                if (itr->goober.questId)                    // quests objects
                 {
-                    mGameObjectForQuestSet.insert(go_entry);
+                    mGameObjectForQuestSet.insert(itr->id);
                     ++count;
                 }
                 break;
@@ -7402,7 +7420,27 @@ void ObjectMgr::LoadGameObjectForQuests()
     sLog.outString(">> Loaded %u GameObjects for quests", count);
 }
 
-bool ObjectMgr::LoadMangosStrings(DatabaseType& db, char const* table, int32 min_value, int32 max_value)
+inline void _DoStringError(int32 entry, char const* text, ...)
+{
+    MANGOS_ASSERT(text);
+
+    char buf[256];
+    va_list ap;
+    va_start(ap, text);
+    vsnprintf(buf, 256, text, ap);
+    va_end(ap);
+
+    if (entry <= MAX_CREATURE_AI_TEXT_STRING_ID)            // script library error
+        sLog.outErrorScriptLib("%s", buf);
+    else if (entry <= MIN_CREATURE_AI_TEXT_STRING_ID)       // eventAI error
+        sLog.outErrorEventAI("%s", buf);
+    else if (entry < MIN_DB_SCRIPT_STRING_ID)               // mangos string error
+        sLog.outError("%s", buf);
+    else // if (entry > MIN_DB_SCRIPT_STRING_ID)            // DB script text error
+        sLog.outErrorDb("DB-SCRIPTS: %s", buf);
+}
+
+bool ObjectMgr::LoadMangosStrings(DatabaseType& db, char const* table, int32 min_value, int32 max_value, bool extra_content)
 {
     int32 start_value = min_value;
     int32 end_value   = max_value;
@@ -7438,7 +7476,10 @@ bool ObjectMgr::LoadMangosStrings(DatabaseType& db, char const* table, int32 min
             ++itr;
     }
 
-    QueryResult* result = db.PQuery("SELECT entry,content_default,content_loc1,content_loc2,content_loc3,content_loc4,content_loc5,content_loc6,content_loc7,content_loc8 FROM %s", table);
+    sLog.outString("Loading texts from %s%s", table, extra_content ? ", with additional data" : "");
+
+    QueryResult* result = db.PQuery("SELECT entry,content_default,content_loc1,content_loc2,content_loc3,content_loc4,content_loc5,content_loc6,content_loc7,content_loc8 %s FROM %s",
+                                    extra_content ? ",sound,type,language,emote" : "", table);
 
     if (!result)
     {
@@ -7467,20 +7508,20 @@ bool ObjectMgr::LoadMangosStrings(DatabaseType& db, char const* table, int32 min
 
         if (entry == 0)
         {
-            sLog.outErrorDb("Table `%s` contain reserved entry 0, ignored.", table);
+            _DoStringError(start_value, "Table `%s` contain reserved entry 0, ignored.", table);
             continue;
         }
         else if (entry < start_value || entry >= end_value)
         {
-            sLog.outErrorDb("Table `%s` contain entry %i out of allowed range (%d - %d), ignored.", table, entry, min_value, max_value);
+            _DoStringError(start_value, "Table `%s` contain entry %i out of allowed range (%d - %d), ignored.", table, entry, min_value, max_value);
             continue;
         }
 
         MangosStringLocale& data = mMangosStringLocaleMap[entry];
 
-        if (data.Content.size() > 0)
+        if (!data.Content.empty())
         {
-            sLog.outErrorDb("Table `%s` contain data for already loaded entry  %i (from another table?), ignored.", table, entry);
+            _DoStringError(entry, "Table `%s` contain data for already loaded entry  %i (from another table?), ignored.", table, entry);
             continue;
         }
 
@@ -7506,16 +7547,51 @@ bool ObjectMgr::LoadMangosStrings(DatabaseType& db, char const* table, int32 min
                 }
             }
         }
+
+        // Load additional string content if necessary
+        if (extra_content)
+        {
+            data.SoundId     = fields[10].GetUInt32();
+            data.Type        = fields[11].GetUInt32();
+            data.LanguageId  = Language(fields[12].GetUInt32());
+            data.Emote       = fields[13].GetUInt32();
+
+            if (data.SoundId && !sSoundEntriesStore.LookupEntry(data.SoundId))
+            {
+                _DoStringError(entry, "Entry %i in table `%s` has soundId %u but sound does not exist.", entry, table, data.SoundId);
+                data.SoundId = 0;
+            }
+
+            if (!GetLanguageDescByID(data.LanguageId))
+            {
+                _DoStringError(entry, "Entry %i in table `%s` using Language %u but Language does not exist.", entry, table, uint32(data.LanguageId));
+                data.LanguageId = LANG_UNIVERSAL;
+            }
+
+            if (data.Type > CHAT_TYPE_ZONE_YELL)
+            {
+                _DoStringError(entry, "Entry %i in table `%s` has Type %u but this Chat Type does not exist.", entry, table, data.Type);
+                data.Type = CHAT_TYPE_SAY;
+            }
+
+            if (data.Emote && !sEmotesStore.LookupEntry(data.Emote))
+            {
+                _DoStringError(entry, "Entry %i in table `%s` has Emote %u but emote does not exist.", entry, table, data.Emote);
+                data.Emote = EMOTE_ONESHOT_NONE;
+            }
+        }
     }
     while (result->NextRow());
 
     delete result;
 
-    sLog.outString();
     if (min_value == MIN_MANGOS_STRING_ID)
         sLog.outString(">> Loaded %u MaNGOS strings from table %s", count, table);
     else
-        sLog.outString(">> Loaded %u string templates from %s", count, table);
+        sLog.outString(">> Loaded %u %s templates from %s", count, extra_content ? "text" : "string", table);
+    sLog.outString();
+
+    m_loadedStringCount[min_value] = count;
 
     return true;
 }
@@ -7532,14 +7608,8 @@ const char* ObjectMgr::GetMangosString(int32 entry, int locale_idx) const
             return msl->Content[0].c_str();
     }
 
-    if (entry > MIN_DB_SCRIPT_STRING_ID)
-        sLog.outErrorDb("Entry %i not found in `db_script_string` table.", entry);
-    else if (entry > 0)
-        sLog.outErrorDb("Entry %i not found in `mangos_string` table.", entry);
-    else if (entry > MAX_CREATURE_AI_TEXT_STRING_ID)
-        sLog.outErrorDb("Entry %i not found in `creature_ai_texts` table.", entry);
-    else
-        sLog.outErrorDb("Mangos string entry %i not found in DB.", entry);
+    _DoStringError(entry, "Entry %i not found but requested", entry);
+
     return "<error>";
 }
 
@@ -7590,13 +7660,10 @@ void ObjectMgr::LoadFishingBaseSkillLevel()
 }
 
 // Check if a player meets condition conditionId
-bool ObjectMgr::IsPlayerMeetToCondition(Player const* pPlayer, uint16 conditionId) const
+bool ObjectMgr::IsPlayerMeetToCondition(uint16 conditionId, Player const* pPlayer, Map const* map, WorldObject const* source, ConditionSource conditionSourceType) const
 {
-    if (!pPlayer)
-        return false;                                       // player not present, return false
-
     if (const PlayerCondition* condition = sConditionStorage.LookupEntry<PlayerCondition>(conditionId))
-        return condition->Meets(pPlayer);
+        return condition->Meets(pPlayer, map, source, conditionSourceType);
 
     return false;
 }
@@ -7615,23 +7682,40 @@ bool ObjectMgr::CheckDeclinedNames(std::wstring mainpart, DeclinedName const& na
     return true;
 }
 
-// Checks if player meets the condition
-bool PlayerCondition::Meets(Player const* player) const
+char const* conditionSourceToStr[] =
 {
-    if (!player)
-        return false;                                       // player not present, return false
+    "loot system",
+    "referencing loot",
+    "gossip menu",
+    "gossip menu option",
+    "event AI",
+    "hardcoded",
+    "vendor's item check",
+    "spell_area check",
+    "npc_spellclick_spells check",
+    "DBScript engine"
+};
+
+// Checks if player meets the condition
+bool PlayerCondition::Meets(Player const* player, Map const* map, WorldObject const* source, ConditionSource conditionSourceType) const
+{
+    DEBUG_LOG("Condition-System: Check condition %u, type %i - called from %s with params plr: %s, map %i, src %s",
+              m_entry, m_condition, conditionSourceToStr[conditionSourceType], player ? player->GetGuidStr().c_str() : "<NULL>", map ? map->GetId() : -1, source ? source->GetGuidStr().c_str() : "<NULL>");
+
+    if (!CheckParamRequirements(player, map, source, conditionSourceType))
+        return false;
 
     switch (m_condition)
     {
         case CONDITION_NOT:
             // Checked on load
-            return !sConditionStorage.LookupEntry<PlayerCondition>(m_value1)->Meets(player);
+            return !sConditionStorage.LookupEntry<PlayerCondition>(m_value1)->Meets(player, map, source, conditionSourceType);
         case CONDITION_OR:
             // Checked on load
-            return sConditionStorage.LookupEntry<PlayerCondition>(m_value1)->Meets(player) || sConditionStorage.LookupEntry<PlayerCondition>(m_value2)->Meets(player);
+            return sConditionStorage.LookupEntry<PlayerCondition>(m_value1)->Meets(player, map, source, conditionSourceType) || sConditionStorage.LookupEntry<PlayerCondition>(m_value2)->Meets(player, map, source, conditionSourceType);
         case CONDITION_AND:
             // Checked on load
-            return sConditionStorage.LookupEntry<PlayerCondition>(m_value1)->Meets(player) && sConditionStorage.LookupEntry<PlayerCondition>(m_value2)->Meets(player);
+            return sConditionStorage.LookupEntry<PlayerCondition>(m_value1)->Meets(player, map, source, conditionSourceType) && sConditionStorage.LookupEntry<PlayerCondition>(m_value2)->Meets(player, map, source, conditionSourceType);
         case CONDITION_NONE:
             return true;                                    // empty condition, always met
         case CONDITION_AURA:
@@ -7643,7 +7727,8 @@ bool PlayerCondition::Meets(Player const* player) const
         case CONDITION_AREAID:
         {
             uint32 zone, area;
-            player->GetZoneAndAreaId(zone, area);
+            WorldObject const* searcher = source ? source : player;
+            searcher->GetZoneAndAreaId(zone, area);
             return (zone == m_value1 || area == m_value1) == (m_value2 == 0);
         }
         case CONDITION_REPUTATION_RANK_MIN:
@@ -7658,9 +7743,7 @@ bool PlayerCondition::Meets(Player const* player) const
         case CONDITION_QUESTREWARDED:
             return player->GetQuestRewardStatus(m_value1);
         case CONDITION_QUESTTAKEN:
-        {
             return player->IsCurrentQuest(m_value1, m_value2);
-        }
         case CONDITION_AD_COMMISSION_AURA:
         {
             Unit::SpellAuraHolderMap const& auras = player->GetSpellAuraHolderMap();
@@ -7675,7 +7758,8 @@ bool PlayerCondition::Meets(Player const* player) const
             return sGameEventMgr.IsActiveEvent(m_value1);
         case CONDITION_AREA_FLAG:
         {
-            if (AreaTableEntry const* pAreaEntry = GetAreaEntryByAreaID(player->GetAreaId()))
+            WorldObject const* searcher = source ? source : player;
+            if (AreaTableEntry const* pAreaEntry = GetAreaEntryByAreaID(searcher->GetAreaId()))
             {
                 if ((!m_value1 || (pAreaEntry->flags & m_value1)) && (!m_value2 || !(pAreaEntry->flags & m_value2)))
                     return true;
@@ -7709,19 +7793,16 @@ bool PlayerCondition::Meets(Player const* player) const
         }
         case CONDITION_INSTANCE_SCRIPT:
         {
-            // have meaning only for specific map instance script so ignore other maps
-            if (player->GetMapId() != m_value1)
-                return false;
-            if (InstanceData* data = player->GetInstanceData())
-                return data->CheckConditionCriteriaMeet(player, m_value1, m_value2);
+            if (!map)
+                map = player ? player->GetMap() : source->GetMap();
+
+            if (InstanceData* data = map->GetInstanceData())
+                return data->CheckConditionCriteriaMeet(player, m_value1, source, conditionSourceType);
             return false;
         }
         case CONDITION_QUESTAVAILABLE:
         {
-            if (Quest const* quest = sObjectMgr.GetQuestTemplate(m_value1))
-                return player->CanTakeQuest(quest, false);
-            else
-                return false;
+            return player->CanTakeQuest(sObjectMgr.GetQuestTemplate(m_value1), false);
         }
         case CONDITION_ACHIEVEMENT:
         {
@@ -7811,10 +7892,12 @@ bool PlayerCondition::Meets(Player const* player) const
             return false;
         }
         case CONDITION_SKILL_BELOW:
+        {
             if (m_value2 == 1)
                 return !player->HasSkill(m_value1);
             else
                 return player->HasSkill(m_value1) && player->GetBaseSkillValue(m_value1) < m_value2;
+        }
         case CONDITION_REPUTATION_RANK_MAX:
         {
             FactionEntry const* faction = sFactionStore.LookupEntry(m_value1);
@@ -7822,32 +7905,180 @@ bool PlayerCondition::Meets(Player const* player) const
         }
         case CONDITION_COMPLETED_ENCOUNTER:
         {
-            if (!player->GetMap()->IsDungeon())
+            if (!map)
+                map = player ? player->GetMap() : source->GetMap();
+            if (!map->IsDungeon())
             {
                 sLog.outErrorDb("CONDITION_COMPLETED_ENCOUNTER (entry %u) is used outside of a dungeon (on Map %u) by %s", m_entry, player->GetMapId(), player->GetGuidStr().c_str());
                 return false;
             }
 
-            uint32 completedEncounterMask = ((DungeonMap*)player->GetMap())->GetPersistanceState()->GetCompletedEncountersMask();
+            uint32 completedEncounterMask = ((DungeonMap*)map)->GetPersistanceState()->GetCompletedEncountersMask();
             DungeonEncounterEntry const* dbcEntry1 = sDungeonEncounterStore.LookupEntry(m_value1);
             DungeonEncounterEntry const* dbcEntry2 = sDungeonEncounterStore.LookupEntry(m_value2);
             // Check that on proper map
-            if (dbcEntry1->mapId != player->GetMapId())
+            if (dbcEntry1->mapId != map->GetId())
             {
                 sLog.outErrorDb("CONDITION_COMPLETED_ENCOUNTER (entry %u, DungeonEncounterEntry %u) is used on wrong map (used on Map %u) by %s", m_entry, m_value1, player->GetMapId(), player->GetGuidStr().c_str());
                 return false;
             }
             // Select matching difficulties
-            if (player->GetDifficulty(player->GetMap()->IsRaid()) != Difficulty(dbcEntry1->Difficulty))
+            if (map->GetDifficulty() != Difficulty(dbcEntry1->Difficulty))
                 dbcEntry1 = NULL;
-            if (dbcEntry2 && player->GetDifficulty(player->GetMap()->IsRaid()) != Difficulty(dbcEntry2->Difficulty))
+            if (dbcEntry2 && map->GetDifficulty() != Difficulty(dbcEntry2->Difficulty))
                 dbcEntry2 = NULL;
 
             return completedEncounterMask & ((dbcEntry1 ? 1 << dbcEntry1->encounterIndex : 0) | (dbcEntry2 ? 1 << dbcEntry2->encounterIndex : 0));
         }
+        case CONDITION_SOURCE_AURA:
+        {
+            if (!source->isType(TYPEMASK_UNIT))
+            {
+                sLog.outErrorDb("CONDITION_SOURCE_AURA (entry %u) is used for non unit source (source %s) by %s", m_entry, source->GetGuidStr().c_str(), player->GetGuidStr().c_str());
+                return false;
+            }
+            return ((Unit*)source)->HasAura(m_value1, SpellEffectIndex(m_value2));
+        }
+        case CONDITION_LAST_WAYPOINT:
+        {
+            if (source->GetTypeId() != TYPEID_UNIT)
+            {
+                sLog.outErrorDb("CONDITION_LAST_WAYPOINT (entry %u) is used for non creature source (source %s) by %s", m_entry, source->GetGuidStr().c_str(), player->GetGuidStr().c_str());
+                return false;
+            }
+            uint32 lastReachedWp = ((Creature*)source)->GetMotionMaster()->getLastReachedWaypoint();
+            switch (m_value2)
+            {
+                case 0: return m_value1 == lastReachedWp;
+                case 1: return m_value1 <= lastReachedWp;
+                case 2: return m_value1 > lastReachedWp;
+            }
+            return false;
+        }
+        case CONDITION_XP_USER:
+        {
+            switch (m_value1)
+            {
+                case 0: return player->HasFlag(PLAYER_FLAGS, PLAYER_FLAGS_XP_USER_DISABLED);
+                case 1: return !player->HasFlag(PLAYER_FLAGS, PLAYER_FLAGS_XP_USER_DISABLED);
+            }
+            return false;
+        }
+        case CONDITION_GENDER:
+            return player->getGender() == m_value1;
+        case CONDITION_DEAD_OR_AWAY:
+            switch (m_value1)
+            {
+                case 0:                                     // Player dead or out of range
+                    return !player || !player->isAlive() || (m_value2 && source && !source->IsWithinDistInMap(player, m_value2));
+                case 1:                                     // All players in Group dead or out of range
+                    if (!player)
+                        return true;
+                    if (Group const* grp = player->GetGroup())
+                    {
+                        for (GroupReference const* itr = grp->GetFirstMember(); itr != NULL; itr = itr->next())
+                        {
+                            Player const* pl = itr->getSource();
+                            if (pl && pl->isAlive() && !pl->isGameMaster() && (!m_value2 || !source || source->IsWithinDistInMap(pl, m_value2)))
+                                return false;
+                        }
+                        return true;
+                    }
+                    else
+                        return !player->isAlive() || (m_value2 && source && !source->IsWithinDistInMap(player, m_value2));
+                case 2:                                     // All players in instance dead or out of range
+                    for (Map::PlayerList::const_iterator itr = map->GetPlayers().begin(); itr != map->GetPlayers().end(); ++itr)
+                    {
+                        Player const* plr = itr->getSource();
+                        if (plr && plr->isAlive() && !plr->isGameMaster() && (!m_value2 || !source || source->IsWithinDistInMap(plr, m_value2)))
+                            return false;
+                    }
+                    return true;
+                case 3:                                     // Creature source is dead
+                    return !source || source->GetTypeId() != TYPEID_UNIT || !((Unit*)source)->isAlive();
+            }
         default:
             return false;
     }
+}
+
+// Which params must be provided to a Condition
+bool PlayerCondition::CheckParamRequirements(Player const* pPlayer, Map const* map, WorldObject const* source, ConditionSource conditionSourceType) const
+{
+    switch (m_condition)
+    {
+        case CONDITION_NOT:
+        case CONDITION_AND:
+        case CONDITION_OR:
+        case CONDITION_NONE:
+        case CONDITION_ACTIVE_GAME_EVENT:
+        case CONDITION_ACHIEVEMENT_REALM:
+        case CONDITION_NOT_ACTIVE_GAME_EVENT:
+        case CONDITION_ACTIVE_HOLIDAY:
+        case CONDITION_NOT_ACTIVE_HOLIDAY:
+            break;
+        case CONDITION_AREAID:
+        case CONDITION_AREA_FLAG:
+            if (!pPlayer && !source)
+            {
+                sLog.outErrorDb("CONDITION %u type %u used with bad parameters, called from %s, used with plr: %s, map %i, src %s",
+                                m_entry, m_condition, conditionSourceToStr[conditionSourceType], pPlayer ? pPlayer->GetGuidStr().c_str() : "NULL", map ? map->GetId() : -1, source ? source->GetGuidStr().c_str() : "NULL");
+                return false;
+            }
+            break;
+        case CONDITION_INSTANCE_SCRIPT:
+        case CONDITION_COMPLETED_ENCOUNTER:
+            if (!pPlayer && !source && !map)
+            {
+                sLog.outErrorDb("CONDITION %u type %u used with bad parameters, called from %s, used with plr: %s, map %i, src %s",
+                                m_entry, m_condition, conditionSourceToStr[conditionSourceType], pPlayer ? pPlayer->GetGuidStr().c_str() : "NULL", map ? map->GetId() : -1, source ? source->GetGuidStr().c_str() : "NULL");
+                return false;
+            }
+            break;
+        case CONDITION_SOURCE_AURA:
+        case CONDITION_LAST_WAYPOINT:
+            if (!source)
+            {
+                sLog.outErrorDb("CONDITION %u type %u used with bad parameters, called from %s, used with plr: %s, map %i, src %s",
+                                m_entry, m_condition, conditionSourceToStr[conditionSourceType], pPlayer ? pPlayer->GetGuidStr().c_str() : "NULL", map ? map->GetId() : -1, source ? source->GetGuidStr().c_str() : "NULL");
+                return false;
+            }
+            break;
+        case CONDITION_DEAD_OR_AWAY:
+            switch (m_value1)
+            {
+                case 0:                                     // Player dead or out of range
+                case 1:                                     // All players in Group dead or out of range
+                case 2:                                     // All players in instance dead or out of range
+                    if (m_value2 && !source)
+                    {
+                        sLog.outErrorDb("CONDITION_DEAD_OR_AWAY %u - called from %s without source, but source expected for range check", m_entry, conditionSourceToStr[conditionSourceType]);
+                        return false;
+                    }
+                    if (m_value1 != 2)
+                        return true;
+                    // Case 2 (Instance map only)
+                    if (!map && (pPlayer || source))
+                        map = source ? source->GetMap() : pPlayer->GetMap();
+                    if (!map || !map->Instanceable())
+                    {
+                        sLog.outErrorDb("CONDITION_DEAD_OR_AWAY %u (Player in instance case) - called from %s without map param or from non-instanceable map %i", m_entry,  conditionSourceToStr[conditionSourceType], map ? map->GetId() : -1);
+                        return false;
+                    }
+                case 3:                                     // Creature source is dead
+                    return true;
+            }
+            break;
+        default:
+            if (!pPlayer)
+            {
+                sLog.outErrorDb("CONDITION %u type %u used with bad parameters, called from %s, used with plr: %s, map %i, src %s",
+                                m_entry, m_condition, conditionSourceToStr[conditionSourceType], pPlayer ? pPlayer->GetGuidStr().c_str() : "NULL", map ? map->GetId() : -1, source ? source->GetGuidStr().c_str() : "NULL");
+                return false;
+            }
+            break;
+    }
+    return true;
 }
 
 // Verification of condition values validity
@@ -7898,6 +8129,7 @@ bool PlayerCondition::IsValid(uint16 entry, ConditionType condition, uint32 valu
             break;
         }
         case CONDITION_AURA:
+        case CONDITION_SOURCE_AURA:
         {
             if (!sSpellStore.LookupEntry(value1))
             {
@@ -8109,16 +8341,7 @@ bool PlayerCondition::IsValid(uint16 entry, ConditionType condition, uint32 valu
             break;
         }
         case CONDITION_INSTANCE_SCRIPT:
-        {
-            MapEntry const* mapEntry = sMapStore.LookupEntry(value1);
-            if (!mapEntry || !mapEntry->IsDungeon())
-            {
-                sLog.outErrorDb("Instance script condition (entry %u, type %u) has nonexistent map id %u as first arg, skipped", entry, condition, value1);
-                return false;
-            }
-
             break;
-        }
         case CONDITION_ACHIEVEMENT:
         case CONDITION_ACHIEVEMENT_REALM:
         {
@@ -8189,6 +8412,46 @@ bool PlayerCondition::IsValid(uint16 entry, ConditionType condition, uint32 valu
             }
             break;
         }
+        case CONDITION_LAST_WAYPOINT:
+        {
+            if (value2 > 2)
+            {
+                sLog.outErrorDb("Last Waypoint condition (entry %u, type %u) has an invalid value in value2. (Has %u, supported 0, 1, or 2), skipping.", entry, condition, value2);
+                return false;
+            }
+            break;
+        }
+        case CONDITION_XP_USER:
+        {
+            if (value1 > 1)
+            {
+                sLog.outErrorDb("XP user condition (entry %u, type %u) has invalid argument %u (must be 0..1), skipped", entry, condition, value1);
+                return false;
+            }
+
+            if (value2)
+                sLog.outErrorDb("XP user condition (entry %u, type %u) has useless data in value2 (%u)!", entry, condition, value2);
+
+            break;
+        }
+        case CONDITION_GENDER:
+        {
+            if (value1 >= MAX_GENDER)
+            {
+                sLog.outErrorDb("Gender condition (entry %u, type %u) has an invalid value in value1. (Has %u, must be smaller than %u), skipping.", entry, condition, value1, MAX_GENDER);
+                return false;
+            }
+            break;
+        }
+        case CONDITION_DEAD_OR_AWAY:
+        {
+            if (value1 >= 4)
+            {
+                sLog.outErrorDb("Dead condition (entry %u, type %u) has an invalid value in value1. (Has %u, must be smaller than 4), skipping.", entry, condition, value1);
+                return false;
+            }
+            break;
+        }
         case CONDITION_NONE:
             break;
         default:
@@ -8196,6 +8459,38 @@ bool PlayerCondition::IsValid(uint16 entry, ConditionType condition, uint32 valu
             return false;
     }
     return true;
+}
+
+// Check if a condition can be used without providing a player param
+bool PlayerCondition::CanBeUsedWithoutPlayer(uint16 entry)
+{
+    PlayerCondition const* condition = sConditionStorage.LookupEntry<PlayerCondition>(entry);
+    if (!condition)
+        return false;
+
+    switch (condition->m_condition)
+    {
+        case CONDITION_NOT:
+            return CanBeUsedWithoutPlayer(condition->m_value1);
+        case CONDITION_AND:
+        case CONDITION_OR:
+            return CanBeUsedWithoutPlayer(condition->m_value1) && CanBeUsedWithoutPlayer(condition->m_value2);
+        case CONDITION_NONE:
+        case CONDITION_ACTIVE_GAME_EVENT:
+        case CONDITION_ACHIEVEMENT_REALM:
+        case CONDITION_NOT_ACTIVE_GAME_EVENT:
+        case CONDITION_ACTIVE_HOLIDAY:
+        case CONDITION_NOT_ACTIVE_HOLIDAY:
+        case CONDITION_AREAID:
+        case CONDITION_AREA_FLAG:
+        case CONDITION_INSTANCE_SCRIPT:
+        case CONDITION_COMPLETED_ENCOUNTER:
+        case CONDITION_SOURCE_AURA:
+        case CONDITION_LAST_WAYPOINT:
+            return true;
+        default:
+            return false;
+    }
 }
 
 SkillRangeType GetSkillRangeType(SkillLineEntry const* pSkill, bool racial)
@@ -8581,9 +8876,9 @@ void ObjectMgr::LoadTrainers(char const* tableName, bool isTemplates)
         }
 
         ++count;
-
     }
     while (result->NextRow());
+
     delete result;
 
     sLog.outString();
@@ -8629,7 +8924,7 @@ void ObjectMgr::LoadVendors(char const* tableName, bool isTemplates)
 
     std::set<uint32> skip_vendors;
 
-    QueryResult* result = WorldDatabase.PQuery("SELECT entry, item, maxcount, incrtime, ExtendedCost FROM %s", tableName);
+    QueryResult* result = WorldDatabase.PQuery("SELECT entry, item, maxcount, incrtime, ExtendedCost, condition_id FROM %s", tableName);
     if (!result)
     {
         BarGoLink bar(1);
@@ -8654,23 +8949,23 @@ void ObjectMgr::LoadVendors(char const* tableName, bool isTemplates)
         uint32 maxcount     = fields[2].GetUInt32();
         uint32 incrtime     = fields[3].GetUInt32();
         uint32 ExtendedCost = fields[4].GetUInt32();
+        uint16 conditionId  = fields[5].GetUInt16();
 
-        if (!IsVendorItemValid(isTemplates, tableName, entry, item_id, maxcount, incrtime, ExtendedCost, NULL, &skip_vendors))
+        if (!IsVendorItemValid(isTemplates, tableName, entry, item_id, maxcount, incrtime, ExtendedCost, conditionId, NULL, &skip_vendors))
             continue;
 
         VendorItemData& vList = vendorList[entry];
 
-        vList.AddItem(item_id, maxcount, incrtime, ExtendedCost);
+        vList.AddItem(item_id, maxcount, incrtime, ExtendedCost, conditionId);
         ++count;
-
     }
     while (result->NextRow());
+
     delete result;
 
     sLog.outString();
     sLog.outString(">> Loaded %u vendor %sitems", count, isTemplates ? "template " : "");
 }
-
 
 void ObjectMgr::LoadVendorTemplates()
 {
@@ -8702,7 +8997,6 @@ void ObjectMgr::LoadVendorTemplates()
 
 void ObjectMgr::LoadNpcGossips()
 {
-
     m_mCacheNpcTextIdMap.clear();
 
     QueryResult* result = WorldDatabase.Query("SELECT npc_guid, textid FROM npc_gossip");
@@ -8743,9 +9037,9 @@ void ObjectMgr::LoadNpcGossips()
 
         m_mCacheNpcTextIdMap[guid] = textid ;
         ++count;
-
     }
     while (result->NextRow());
+
     delete result;
 
     sLog.outString();
@@ -8800,7 +9094,7 @@ void ObjectMgr::LoadGossipMenu(std::set<uint32>& gossipScriptSet)
         {
             if (sGossipScripts.second.find(gMenu.script_id) == sGossipScripts.second.end())
             {
-                sLog.outErrorDb("Table gossip_menu for menu %u, text-id %u have script_id %u that does not exist in `gossip_scripts`, ignoring", gMenu.entry, gMenu.text_id, gMenu.script_id);
+                sLog.outErrorDb("Table gossip_menu for menu %u, text-id %u have script_id %u that does not exist in `dbscripts_on_gossip`, ignoring", gMenu.entry, gMenu.text_id, gMenu.script_id);
                 continue;
             }
 
@@ -8836,11 +9130,10 @@ void ObjectMgr::LoadGossipMenu(std::set<uint32>& gossipScriptSet)
                 if (m_mGossipMenusMap.find(cInfo->GossipMenuId) == m_mGossipMenusMap.end())
                     sLog.outErrorDb("Creature (Entry: %u) has gossip_menu_id = %u for nonexistent menu", cInfo->Entry, cInfo->GossipMenuId);
 
-    for (uint32 i = 1; i < sGOStorage.GetMaxEntry(); ++i)
-        if (GameObjectInfo const* gInfo = sGOStorage.LookupEntry<GameObjectInfo>(i))
-            if (uint32 menuid = gInfo->GetGossipMenuId())
-                if (m_mGossipMenusMap.find(menuid) == m_mGossipMenusMap.end())
-                    ERROR_DB_STRICT_LOG("Gameobject (Entry: %u) has gossip_menu_id = %u for nonexistent menu", gInfo->id, menuid);
+    for (SQLStorageBase::SQLSIterator<GameObjectInfo> itr = sGOStorage.getDataBegin<GameObjectInfo>(); itr < sGOStorage.getDataEnd<GameObjectInfo>(); ++itr)
+        if (uint32 menuid = itr->GetGossipMenuId())
+            if (m_mGossipMenusMap.find(menuid) == m_mGossipMenusMap.end())
+                ERROR_DB_STRICT_LOG("Gameobject (Entry: %u) has gossip_menu_id = %u for nonexistent menu", itr->id, menuid);
 }
 
 void ObjectMgr::LoadGossipMenuItems(std::set<uint32>& gossipScriptSet)
@@ -8851,7 +9144,7 @@ void ObjectMgr::LoadGossipMenuItems(std::set<uint32>& gossipScriptSet)
                               "SELECT menu_id, id, option_icon, option_text, option_id, npc_option_npcflag, "
                               "action_menu_id, action_poi_id, action_script_id, box_coded, box_money, box_text, "
                               "condition_id "
-                              "FROM gossip_menu_option");
+                              "FROM gossip_menu_option ORDER BY menu_id, id");
 
     if (!result)
     {
@@ -8872,10 +9165,9 @@ void ObjectMgr::LoadGossipMenuItems(std::set<uint32>& gossipScriptSet)
             if (itr->first)
                 menu_ids.insert(itr->first);
 
-        for (uint32 i = 1; i < sGOStorage.GetMaxEntry(); ++i)
-            if (GameObjectInfo const* gInfo = sGOStorage.LookupEntry<GameObjectInfo>(i))
-                if (uint32 menuid = gInfo->GetGossipMenuId())
-                    menu_ids.erase(menuid);
+        for (SQLStorageBase::SQLSIterator<GameObjectInfo> itr = sGOStorage.getDataBegin<GameObjectInfo>(); itr < sGOStorage.getDataEnd<GameObjectInfo>(); ++itr)
+            if (uint32 menuid = itr->GetGossipMenuId())
+                menu_ids.erase(menuid);
     }
 
     // loading
@@ -8980,7 +9272,7 @@ void ObjectMgr::LoadGossipMenuItems(std::set<uint32>& gossipScriptSet)
         {
             if (sGossipScripts.second.find(gMenuItem.action_script_id) == sGossipScripts.second.end())
             {
-                sLog.outErrorDb("Table gossip_menu_option for menu %u, id %u have action_script_id %u that does not exist in `gossip_scripts`, ignoring", gMenuItem.menu_id, gMenuItem.id, gMenuItem.action_script_id);
+                sLog.outErrorDb("Table gossip_menu_option for menu %u, id %u have action_script_id %u that does not exist in `dbscripts_on_gossip`, ignoring", gMenuItem.menu_id, gMenuItem.id, gMenuItem.action_script_id);
                 continue;
             }
 
@@ -9001,7 +9293,6 @@ void ObjectMgr::LoadGossipMenuItems(std::set<uint32>& gossipScriptSet)
         m_mGossipMenuItemsMap.insert(GossipMenuItemsMap::value_type(gMenuItem.menu_id, gMenuItem));
 
         ++count;
-
     }
     while (result->NextRow());
 
@@ -9019,7 +9310,7 @@ void ObjectMgr::LoadGossipMenuItems(std::set<uint32>& gossipScriptSet)
 
 void ObjectMgr::LoadGossipMenus()
 {
-    // Check which script-ids in gossip_scripts are not used
+    // Check which script-ids in dbscripts_on_gossip are not used
     std::set<uint32> gossipScriptSet;
     for (ScriptMapMap::const_iterator itr = sGossipScripts.second.begin(); itr != sGossipScripts.second.end(); ++itr)
         gossipScriptSet.insert(itr->first);
@@ -9031,13 +9322,13 @@ void ObjectMgr::LoadGossipMenus()
     LoadGossipMenuItems(gossipScriptSet);
 
     for (std::set<uint32>::const_iterator itr = gossipScriptSet.begin(); itr != gossipScriptSet.end(); ++itr)
-        sLog.outErrorDb("Table `gossip_scripts` contains unused script, id %u.", *itr);
+        sLog.outErrorDb("Table `dbscripts_on_gossip` contains unused script, id %u.", *itr);
 }
 
 void ObjectMgr::AddVendorItem(uint32 entry, uint32 item, uint32 maxcount, uint32 incrtime, uint32 extendedcost)
 {
     VendorItemData& vList = m_mCacheVendorItemMap[entry];
-    vList.AddItem(item, maxcount, incrtime, extendedcost);
+    vList.AddItem(item, maxcount, incrtime, extendedcost, 0);
 
     WorldDatabase.PExecuteLog("INSERT INTO npc_vendor (entry,item,maxcount,incrtime,extendedcost) VALUES('%u','%u','%u','%u','%u')", entry, item, maxcount, incrtime, extendedcost);
 }
@@ -9055,7 +9346,7 @@ bool ObjectMgr::RemoveVendorItem(uint32 entry, uint32 item)
     return true;
 }
 
-bool ObjectMgr::IsVendorItemValid(bool isTemplate, char const* tableName, uint32 vendor_entry, uint32 item_id, uint32 maxcount, uint32 incrtime, uint32 ExtendedCost, Player* pl, std::set<uint32>* skip_vendors) const
+bool ObjectMgr::IsVendorItemValid(bool isTemplate, char const* tableName, uint32 vendor_entry, uint32 item_id, uint32 maxcount, uint32 incrtime, uint32 ExtendedCost, uint16 conditionId, Player* pl, std::set<uint32>* skip_vendors) const
 {
     char const* idStr = isTemplate ? "vendor template" : "vendor";
     CreatureInfo const* cInfo = NULL;
@@ -9124,6 +9415,12 @@ bool ObjectMgr::IsVendorItemValid(bool isTemplate, char const* tableName, uint32
         else
             sLog.outErrorDb("Table `%s` has `maxcount`=0 for item %u of %s %u but `incrtime`<>0, ignoring",
                             tableName, item_id, idStr, vendor_entry);
+        return false;
+    }
+
+    if (conditionId && !sConditionStorage.LookupEntry<PlayerCondition>(conditionId))
+    {
+        sLog.outErrorDb("Table `%s` has `condition_id`=%u for item %u of %s %u but this condition is not valid, ignoring", tableName, conditionId, item_id, idStr, vendor_entry);
         return false;
     }
 
@@ -9197,7 +9494,6 @@ void ObjectMgr::RemoveArenaTeam(uint32 Id)
 {
     mArenaTeamMap.erase(Id);
 }
-
 
 void ObjectMgr::GetCreatureLocaleStrings(uint32 entry, int32 loc_idx, char const** namePtr, char const** subnamePtr) const
 {
@@ -9278,7 +9574,7 @@ void ObjectMgr::GetNpcTextLocaleStrings0(uint32 entry, int32 loc_idx, std::strin
 }
 
 // Functions for scripting access
-bool LoadMangosStrings(DatabaseType& db, char const* table, int32 start_value, int32 end_value)
+bool LoadMangosStrings(DatabaseType& db, char const* table, int32 start_value, int32 end_value, bool extra_content)
 {
     // MAX_DB_SCRIPT_STRING_ID is max allowed negative value for scripts (scrpts can use only more deep negative values
     // start/end reversed for negative values
@@ -9288,7 +9584,7 @@ bool LoadMangosStrings(DatabaseType& db, char const* table, int32 start_value, i
         return false;
     }
 
-    return sObjectMgr.LoadMangosStrings(db, table, start_value, end_value);
+    return sObjectMgr.LoadMangosStrings(db, table, start_value, end_value, extra_content);
 }
 
 void ObjectMgr::LoadCreatureTemplateSpells()
@@ -9324,6 +9620,11 @@ CreatureInfo const* GetCreatureTemplateStore(uint32 entry)
 Quest const* GetQuestTemplateStore(uint32 entry)
 {
     return sObjectMgr.GetQuestTemplate(entry);
+}
+
+MangosStringLocale const* GetMangosStringData(int32 entry)
+{
+    return sObjectMgr.GetMangosStringLocale(entry);
 }
 
 bool FindCreatureData::operator()(CreatureDataPair const& dataPair)
@@ -9424,4 +9725,51 @@ GameObjectDataPair const* FindGOData::GetResult() const
         return i_spawnedData;
 
     return i_anyData;
+}
+
+bool DoDisplayText(WorldObject* source, int32 entry, Unit const* target /*=NULL*/)
+{
+    MangosStringLocale const* data = sObjectMgr.GetMangosStringLocale(entry);
+
+    if (!data)
+    {
+        _DoStringError(entry, "DoScriptText with source %s could not find text entry %i.", source->GetGuidStr().c_str(), entry);
+        return false;
+    }
+
+    if (data->SoundId)
+    {
+        if (data->Type == CHAT_TYPE_ZONE_YELL)
+            source->GetMap()->PlayDirectSoundToMap(data->SoundId, source->GetZoneId());
+        else if (data->Type == CHAT_TYPE_WHISPER || data->Type == CHAT_TYPE_BOSS_WHISPER)
+        {
+            // An error will be displayed for the text
+            if (target && target->GetTypeId() == TYPEID_PLAYER)
+                source->PlayDirectSound(data->SoundId, (Player const*)target);
+        }
+        else
+            source->PlayDirectSound(data->SoundId);
+    }
+
+    if (data->Emote)
+    {
+        if (source->GetTypeId() == TYPEID_UNIT || source->GetTypeId() == TYPEID_PLAYER)
+        {
+            ((Unit*)source)->HandleEmote(data->Emote);
+        }
+        else
+        {
+            _DoStringError(entry, "DoDisplayText entry %i tried to process emote for invalid source %s", entry, source->GetGuidStr().c_str());
+            return false;
+        }
+    }
+
+    if ((data->Type == CHAT_TYPE_WHISPER || data->Type == CHAT_TYPE_BOSS_WHISPER) && (!target || target->GetTypeId() != TYPEID_PLAYER))
+    {
+        _DoStringError(entry, "DoDisplayText entry %i cannot whisper without target unit (TYPEID_PLAYER).", entry);
+        return false;
+    }
+
+    source->MonsterText(data, target);
+    return true;
 }

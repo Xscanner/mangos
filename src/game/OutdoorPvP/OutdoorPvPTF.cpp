@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -348,8 +348,11 @@ void OutdoorPvPTF::LockTowers(const WorldObject* objRef)
         if (GameObject* go = objRef->GetMap()->GetGameObject(m_towerBanners[i]))
             go->SetLootState(GO_JUST_DEACTIVATED);
         else
+        {
             // if grid is unloaded, changing the saved slider value is enough
-            sOutdoorPvPMgr.SetCapturePointSlider(terokkarTowers[i], m_zoneOwner == ALLIANCE ? -CAPTURE_SLIDER_ALLIANCE : -CAPTURE_SLIDER_HORDE);
+            CapturePointSlider value(m_zoneOwner == ALLIANCE ? CAPTURE_SLIDER_ALLIANCE : CAPTURE_SLIDER_HORDE, true);
+            sOutdoorPvPMgr.SetCapturePointSlider(terokkarTowers[i], value);
+        }
     }
 }
 
@@ -360,12 +363,15 @@ void OutdoorPvPTF::ResetTowers(const WorldObject* objRef)
     {
         if (GameObject* go = objRef->GetMap()->GetGameObject(m_towerBanners[i]))
         {
-            go->SetCapturePointSlider(CAPTURE_SLIDER_MIDDLE);
+            go->SetCapturePointSlider(CAPTURE_SLIDER_MIDDLE, false);
             // visual update needed because banner still has artkit from previous owner
             SetBannerVisual(go, CAPTURE_ARTKIT_NEUTRAL, CAPTURE_ANIM_NEUTRAL);
         }
         else
-            // if grid is unloaded, resetting the saved slider value is enough
-            sOutdoorPvPMgr.SetCapturePointSlider(terokkarTowers[i], CAPTURE_SLIDER_MIDDLE);
+        {
+            // if grid is unloaded, changing the saved slider value is enough
+            CapturePointSlider value(CAPTURE_SLIDER_MIDDLE, false);
+            sOutdoorPvPMgr.SetCapturePointSlider(terokkarTowers[i], value);
+        }
     }
 }

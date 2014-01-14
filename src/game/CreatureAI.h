@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -59,10 +59,47 @@ enum CastFlags
     CAST_AURA_NOT_PRESENT       = 0x20,                     // Only casts the spell if the target does not have an aura from the spell
 };
 
+enum AIEventType
+{
+    // Usable with Event AI
+    AI_EVENT_JUST_DIED          = 0,                        // Sender = Killed Npc, Invoker = Killer
+    AI_EVENT_CRITICAL_HEALTH    = 1,                        // Sender = Hurt Npc, Invoker = DamageDealer - Expected to be sent by 10% health
+    AI_EVENT_LOST_HEALTH        = 2,                        // Sender = Hurt Npc, Invoker = DamageDealer - Expected to be sent by 50% health
+    AI_EVENT_LOST_SOME_HEALTH   = 3,                        // Sender = Hurt Npc, Invoker = DamageDealer - Expected to be sent by 90% health
+    AI_EVENT_GOT_FULL_HEALTH    = 4,                        // Sender = Healed Npc, Invoker = Healer
+    AI_EVENT_CUSTOM_EVENTAI_A   = 5,                        // Sender = Npc that throws custom event, Invoker = TARGET_T_ACTION_INVOKER (if exists)
+    AI_EVENT_CUSTOM_EVENTAI_B   = 6,                        // Sender = Npc that throws custom event, Invoker = TARGET_T_ACTION_INVOKER (if exists)
+    AI_EVENT_GOT_CCED           = 7,                        // Sender = CCed Npc, Invoker = Caster that CCed
+    MAXIMAL_AI_EVENT_EVENTAI    = 8,
+
+    // Internal Use
+    AI_EVENT_CALL_ASSISTANCE    = 10,                       // Sender = Attacked Npc, Invoker = Enemy
+
+    // Predefined for SD2
+    AI_EVENT_START_ESCORT       = 100,                      // Invoker = Escorting Player
+    AI_EVENT_START_ESCORT_B     = 101,                      // Invoker = Escorting Player
+    AI_EVENT_START_EVENT        = 102,                      // Invoker = EventStarter
+    AI_EVENT_START_EVENT_A      = 103,                      // Invoker = EventStarter
+    AI_EVENT_START_EVENT_B      = 104,                      // Invoker = EventStarter
+
+    // Some IDs for special cases in SD2
+    AI_EVENT_CUSTOM_A           = 1000,
+    AI_EVENT_CUSTOM_B           = 1001,
+    AI_EVENT_CUSTOM_C           = 1002,
+    AI_EVENT_CUSTOM_D           = 1003,
+    AI_EVENT_CUSTOM_E           = 1004,
+    AI_EVENT_CUSTOM_F           = 1005,
+};
+
 class MANGOS_DLL_SPEC CreatureAI
 {
     public:
-        explicit CreatureAI(Creature* creature) : m_creature(creature) {}
+        explicit CreatureAI(Creature* creature) :
+            m_creature(creature),
+            m_isCombatMovement(true),
+            m_attackDistance(0.0f),
+            m_attackAngle(0.0f)
+        {}
 
         virtual ~CreatureAI();
 
@@ -102,8 +139,12 @@ class MANGOS_DLL_SPEC CreatureAI
          */
         virtual void JustReachedHome() {}
 
-        // Called at any heal cast/item used (call non implemented)
-        // virtual void HealBy(Unit * /*healer*/, uint32 /*amount_healed*/) {}
+        /**
+         * Called at any Heal received from any Unit
+         * @param pHealer Unit* which deals the heal
+         * @param uiHealedAmount Amount of healing received
+         */
+        virtual void HealedBy(Unit* /*pHealer*/, uint32& /*uiHealedAmount*/) {}
 
         /**
          * Called at any Damage to any victim (before damage apply)
@@ -264,10 +305,50 @@ class MANGOS_DLL_SPEC CreatureAI
          */
         CanCastResult DoCastSpellIfCan(Unit* pTarget, uint32 uiSpell, uint32 uiCastFlags = 0, ObjectGuid OriginalCasterGuid = ObjectGuid());
 
+        /// Set combat movement (on/off), also sets UNIT_STAT_NO_COMBAT_MOVEMENT
+        void SetCombatMovement(bool enable, bool stopOrStartMovement = false);
+        bool IsCombatMovement() const { return m_isCombatMovement; }
+
+        ///== Event Handling ===============================
+
+        /**
+         * Send an AI Event to nearby Creatures around
+         * @param uiType number to specify the event, default cases listed in enum AIEventType
+         * @param pInvoker Unit that triggered this event (like an attacker)
+         * @param uiDelay  delay time until the Event will be triggered
+         * @param fRadius  range in which for receiver is searched
+         */
+        void SendAIEventAround(AIEventType eventType, Unit* pInvoker, uint32 uiDelay, float fRadius, uint32 miscValue = 0) const;
+
+        /**
+         * Send an AI Event to a Creature
+         * @param eventType to specify the event, default cases listed in enum AIEventType
+         * @param pInvoker Unit that triggered this event (like an attacker)
+         * @param pReceiver Creature to receive this event
+         */
+        void SendAIEvent(AIEventType eventType, Unit* pInvoker, Creature* pReceiver, uint32 miscValue = 0) const;
+
+        /**
+         * Called when an AI Event is received
+         * @param eventType to specify the event, default cases listed in enum AIEventType
+         * @param pSender Creature that sent this event
+         * @param pInvoker Unit that triggered this event (like an attacker)
+         */
+        virtual void ReceiveAIEvent(AIEventType /*eventType*/, Creature* /*pSender*/, Unit* /*pInvoker*/, uint32 /*miscValue*/) {}
+
+    protected:
+        void HandleMovementOnAttackStart(Unit* victim);
+
         ///== Fields =======================================
 
         /// Pointer to the Creature controlled by this AI
         Creature* const m_creature;
+
+        /// Combat movement currently enabled
+        bool m_isCombatMovement;
+        /// How should an enemy be chased
+        float m_attackDistance;
+        float m_attackAngle;
 };
 
 struct SelectableAI : public FactoryHolder<CreatureAI>, public Permissible<Creature>

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -44,7 +44,6 @@ void daemonSignal(int s)
 
     exit(EXIT_FAILURE);
 }
-
 
 void startDaemon(uint32_t timeout)
 {
@@ -120,7 +119,6 @@ void detachDaemon()
     }
 }
 
-
 void exitDaemon()
 {
     if (parent_pid && parent_pid != getpid())
@@ -128,7 +126,6 @@ void exitDaemon()
         kill(parent_pid, SIGTERM);
     }
 }
-
 
 struct WatchDog
 {

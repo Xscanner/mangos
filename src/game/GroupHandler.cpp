@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -824,7 +824,7 @@ void WorldSession::BuildPartyMemberStatsChangedPacket(Player* player, WorldPacke
 /*this procedure handles clients CMSG_REQUEST_PARTY_MEMBER_STATS request*/
 void WorldSession::HandleRequestPartyMemberStatsOpcode(WorldPacket& recv_data)
 {
-    DEBUG_LOG("WORLD: Received CMSG_REQUEST_PARTY_MEMBER_STATS");
+    DEBUG_LOG("WORLD: Received opcode CMSG_REQUEST_PARTY_MEMBER_STATS");
     ObjectGuid guid;
     recv_data >> guid;
 
@@ -944,7 +944,7 @@ void WorldSession::HandleRequestRaidInfoOpcode(WorldPacket& /*recv_data*/)
 
 void WorldSession::HandleOptOutOfLootOpcode(WorldPacket& recv_data)
 {
-    DEBUG_LOG("WORLD: Received CMSG_OPT_OUT_OF_LOOT");
+    DEBUG_LOG("WORLD: Received opcode CMSG_OPT_OUT_OF_LOOT");
 
     uint32 unkn;
     recv_data >> unkn;
@@ -963,7 +963,7 @@ void WorldSession::HandleOptOutOfLootOpcode(WorldPacket& recv_data)
 
 void WorldSession::HandleSetAllowLowLevelRaidOpcode(WorldPacket& recv_data)
 {
-    DEBUG_LOG("WORLD: Received CMSG_SET_ALLOW_LOW_LEVEL_RAID: %4X", recv_data.GetOpcode());
+    DEBUG_LOG("WORLD: Received opcode CMSG_SET_ALLOW_LOW_LEVEL_RAID: %4X", recv_data.GetOpcode());
 
     uint8 allow;
     recv_data >> allow;

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -115,7 +115,8 @@ enum __QuestGiverStatus
     DIALOG_STATUS_AVAILABLE_REP            = 7,
     DIALOG_STATUS_AVAILABLE                = 8,
     DIALOG_STATUS_REWARD2                  = 9,             // no yellow dot on minimap
-    DIALOG_STATUS_REWARD                   = 10             // yellow dot on minimap
+    DIALOG_STATUS_REWARD                   = 10,            // yellow dot on minimap
+    DIALOG_STATUS_UNDEFINED                = 100            // Used as result for unassigned ScriptCall
 };
 
 // values based at QuestInfo.dbc

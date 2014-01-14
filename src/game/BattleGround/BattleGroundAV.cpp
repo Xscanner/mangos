@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -32,10 +32,6 @@ BattleGroundAV::BattleGroundAV()
     m_StartMessageIds[BG_STARTING_EVENT_SECOND] = LANG_BG_AV_START_ONE_MINUTE;
     m_StartMessageIds[BG_STARTING_EVENT_THIRD]  = LANG_BG_AV_START_HALF_MINUTE;
     m_StartMessageIds[BG_STARTING_EVENT_FOURTH] = LANG_BG_AV_HAS_BEGUN;
-}
-
-BattleGroundAV::~BattleGroundAV()
-{
 }
 
 void BattleGroundAV::HandleKillPlayer(Player* player, Player* killer)
@@ -273,11 +269,6 @@ void BattleGroundAV::Update(uint32 diff)
     }
 }
 
-void BattleGroundAV::StartingEventCloseDoors()
-{
-    DEBUG_LOG("BattleGroundAV: entering state STATUS_WAIT_JOIN ...");
-}
-
 void BattleGroundAV::StartingEventOpenDoors()
 {
     UpdateWorldState(BG_AV_SHOW_H_SCORE, WORLD_STATE_ADD);
@@ -354,10 +345,6 @@ void BattleGroundAV::EndBattleGround(Team winner)
     BattleGround::EndBattleGround(winner);
 }
 
-void BattleGroundAV::RemovePlayer(Player* /*plr*/, ObjectGuid /*guid*/)
-{
-}
-
 void BattleGroundAV::HandleAreaTrigger(Player* source, uint32 trigger)
 {
     // this is wrong way to implement these things. On official it done by gameobject spell cast.
@@ -393,7 +380,6 @@ void BattleGroundAV::HandleAreaTrigger(Player* source, uint32 trigger)
 
 void BattleGroundAV::UpdatePlayerScore(Player* source, uint32 type, uint32 value)
 {
-
     BattleGroundScoreMap::iterator itr = m_PlayerScores.find(source->GetObjectGuid());
     if (itr == m_PlayerScores.end())                        // player not found...
         return;
@@ -831,5 +817,4 @@ void BattleGroundAV::Reset()
         InitNode(i, BG_AV_TEAM_HORDE, true);
 
     InitNode(BG_AV_NODES_SNOWFALL_GRAVE, BG_AV_TEAM_NEUTRAL, false);                            // give snowfall neutral owner
-
 }

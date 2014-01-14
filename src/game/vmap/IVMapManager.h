@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -30,7 +30,6 @@ This is the minimum interface to the VMapMamager.
 
 namespace VMAP
 {
-
     enum VMAPLoadResult
     {
         VMAP_LOAD_RESULT_ERROR,
@@ -83,9 +82,9 @@ namespace VMAP
             */
             void setEnableHeightCalc(bool pVal) { iEnableHeightCalc = pVal; }
 
-            bool isLineOfSightCalcEnabled() const { return(iEnableLineOfSightCalc); }
-            bool isHeightCalcEnabled() const { return(iEnableHeightCalc); }
-            bool isMapLoadingEnabled() const { return(iEnableLineOfSightCalc || iEnableHeightCalc); }
+            bool isLineOfSightCalcEnabled() const { return iEnableLineOfSightCalc; }
+            bool isHeightCalcEnabled() const { return iEnableHeightCalc; }
+            bool isMapLoadingEnabled() const { return iEnableLineOfSightCalc || iEnableHeightCalc; }
 
             virtual std::string getDirFileName(unsigned int pMapId, int x, int y) const = 0;
             /**
@@ -95,6 +94,6 @@ namespace VMAP
             virtual bool getAreaInfo(unsigned int pMapId, float x, float y, float& z, uint32& flags, int32& adtId, int32& rootId, int32& groupId) const = 0;
             virtual bool GetLiquidLevel(uint32 pMapId, float x, float y, float z, uint8 ReqLiquidType, float& level, float& floor, uint32& type) const = 0;
     };
-
 }
+
 #endif

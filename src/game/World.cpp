@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -48,7 +48,7 @@
 #include "MapManager.h"
 #include "ScriptMgr.h"
 #include "CreatureAIRegistry.h"
-#include "Policies/SingletonImp.h"
+#include "Policies/Singleton.h"
 #include "BattleGround/BattleGroundMgr.h"
 #include "OutdoorPvP/OutdoorPvP.h"
 #include "TemporarySummon.h"
@@ -66,8 +66,11 @@
 #include "AuctionHouseBot/AuctionHouseBot.h"
 #include "CharacterDatabaseCleaner.h"
 #include "CreatureLinkingMgr.h"
+#include "Calendar.h"
 
 INSTANTIATE_SINGLETON_1(World);
+
+extern void LoadGameObjectModelList();
 
 volatile bool World::m_stopEvent = false;
 uint8 World::m_ExitCode = SHUTDOWN_EXIT_CODE;
@@ -564,6 +567,7 @@ void World::LoadConfigSettings(bool reload)
     setConfig(CONFIG_BOOL_ALLOW_TWO_SIDE_INTERACTION_GUILD,   "AllowTwoSide.Interaction.Guild", false);
     setConfig(CONFIG_BOOL_ALLOW_TWO_SIDE_INTERACTION_AUCTION, "AllowTwoSide.Interaction.Auction", false);
     setConfig(CONFIG_BOOL_ALLOW_TWO_SIDE_INTERACTION_MAIL,    "AllowTwoSide.Interaction.Mail", false);
+    setConfig(CONFIG_BOOL_ALLOW_TWO_SIDE_INTERACTION_CALENDAR,"AllowTwoSide.Interaction.Calendar", false);
     setConfig(CONFIG_BOOL_ALLOW_TWO_SIDE_WHO_LIST,            "AllowTwoSide.WhoList", false);
     setConfig(CONFIG_BOOL_ALLOW_TWO_SIDE_ADD_FRIEND,          "AllowTwoSide.AddFriend", false);
 
@@ -610,8 +614,9 @@ void World::LoadConfigSettings(bool reload)
     setConfig(CONFIG_BOOL_INSTANCE_IGNORE_RAID,  "Instance.IgnoreRaid", false);
 
     setConfig(CONFIG_BOOL_CAST_UNSTUCK, "CastUnstuck", true);
-    setConfig(CONFIG_UINT32_MAX_SPELL_CASTS_IN_CHAIN, "MaxSpellCastsInChain", 10);
+    setConfig(CONFIG_UINT32_MAX_SPELL_CASTS_IN_CHAIN, "MaxSpellCastsInChain", 20);
     setConfig(CONFIG_UINT32_BIRTHDAY_TIME, "BirthdayTime", 1125180000);
+    setConfig(CONFIG_UINT32_RABBIT_DAY, "RabbitDay", 0);
 
     setConfig(CONFIG_UINT32_INSTANCE_RESET_TIME_HOUR, "Instance.ResetTimeHour", 4);
     setConfig(CONFIG_UINT32_INSTANCE_UNLOAD_DELAY,    "Instance.UnloadDelay", 30 * MINUTE * IN_MILLISECONDS);
@@ -698,7 +703,6 @@ void World::LoadConfigSettings(bool reload)
 
     setConfig(CONFIG_UINT32_WORLD_BOSS_LEVEL_DIFF, "WorldBossLevelDiff", 3);
 
-    // note: disable value (-1) will assigned as 0xFFFFFFF, to prevent overflow at calculations limit it to max possible player level MAX_LEVEL(100)
     setConfigMinMax(CONFIG_INT32_QUEST_LOW_LEVEL_HIDE_DIFF, "Quests.LowLevelHideDiff", 4, -1, MAX_LEVEL);
     setConfigMinMax(CONFIG_INT32_QUEST_HIGH_LEVEL_HIDE_DIFF, "Quests.HighLevelHideDiff", 7, -1, MAX_LEVEL);
 
@@ -736,6 +740,7 @@ void World::LoadConfigSettings(bool reload)
     setConfigMinMax(CONFIG_FLOAT_GHOST_RUN_SPEED_BG,      "Death.Ghost.RunSpeed.Battleground", 1.0f, 0.1f, 10.0f);
 
     setConfig(CONFIG_FLOAT_THREAT_RADIUS, "ThreatRadius", 100.0f);
+    setConfigMin(CONFIG_UINT32_CREATURE_RESPAWN_AGGRO_DELAY, "CreatureRespawnAggroDelay", 5000, 0);
 
     // always use declined names in the russian client
     if (getConfig(CONFIG_UINT32_REALM_ZONE) == REALM_ZONE_RUSSIAN)
@@ -770,6 +775,8 @@ void World::LoadConfigSettings(bool reload)
     setConfig(CONFIG_BOOL_OFFHAND_CHECK_AT_TALENTS_RESET, "OffhandCheckAtTalentsReset", false);
 
     setConfig(CONFIG_BOOL_KICK_PLAYER_ON_BAD_PACKET, "Network.KickOnBadPacket", false);
+
+    setConfig(CONFIG_BOOL_PLAYER_COMMANDS, "PlayerCommands", true);
 
     if (int clientCacheId = sConfig.GetIntDefault("ClientCacheVersion", 0))
     {
@@ -929,15 +936,17 @@ void World::SetInitialWorldSettings()
     LoadConfigSettings();
 
     ///- Check the existence of the map files for all races start areas.
-    if (!MapManager::ExistMapAndVMap(0, -6240.32f, 331.033f) ||
-            !MapManager::ExistMapAndVMap(0, -8949.95f, -132.493f) ||
-            !MapManager::ExistMapAndVMap(0, -8949.95f, -132.493f) ||
-            !MapManager::ExistMapAndVMap(1, -618.518f, -4251.67f) ||
-            !MapManager::ExistMapAndVMap(0, 1676.35f, 1677.45f) ||
-            !MapManager::ExistMapAndVMap(1, 10311.3f, 832.463f) ||
-            !MapManager::ExistMapAndVMap(1, -2917.58f, -257.98f) ||
-            (m_configUint32Values[CONFIG_UINT32_EXPANSION] &&
-             (!MapManager::ExistMapAndVMap(530, 10349.6f, -6357.29f) || !MapManager::ExistMapAndVMap(530, -3961.64f, -13931.2f))))
+    if (!MapManager::ExistMapAndVMap(0, -6240.32f, 331.033f) ||                     // Dwarf/ Gnome
+            !MapManager::ExistMapAndVMap(0, -8949.95f, -132.493f) ||                // Human
+            !MapManager::ExistMapAndVMap(1, -618.518f, -4251.67f) ||                // Orc
+            !MapManager::ExistMapAndVMap(0, 1676.35f, 1677.45f) ||                  // Scourge
+            !MapManager::ExistMapAndVMap(1, 10311.3f, 832.463f) ||                  // NightElf
+            !MapManager::ExistMapAndVMap(1, -2917.58f, -257.98f) ||                 // Tauren
+            (m_configUint32Values[CONFIG_UINT32_EXPANSION] >= EXPANSION_TBC &&
+              (!MapManager::ExistMapAndVMap(530, 10349.6f, -6357.29f) ||            // BloodElf
+              !MapManager::ExistMapAndVMap(530, -3961.64f, -13931.2f))) ||          // Draenei
+            (m_configUint32Values[CONFIG_UINT32_EXPANSION] >= EXPANSION_WOTLK &&
+              !MapManager::ExistMapAndVMap(609, 2355.84f, -5664.77f)))              // Death Knight
     {
         sLog.outError("Correct *.map files not found in path '%smaps' or *.vmtree/*.vmtile files in '%svmaps'. Please place *.map and vmap files in appropriate directories or correct the DataDir value in the mangosd.conf file.", m_dataPath.c_str(), m_dataPath.c_str());
         Log::WaitBeforeContinueIfNeed();
@@ -1007,6 +1016,9 @@ void World::SetInitialWorldSettings()
 
     sLog.outString("Loading Game Object Templates...");     // must be after LoadPageTexts
     sObjectMgr.LoadGameobjectInfo();
+
+    sLog.outString("Loading GameObject models...");
+    LoadGameObjectModelList();
 
     sLog.outString("Loading Spell Chain Data...");
     sSpellMgr.LoadSpellChains();
@@ -1282,6 +1294,8 @@ void World::SetInitialWorldSettings()
     sLog.outString("Loading Groups...");
     sObjectMgr.LoadGroups();
 
+    sCalendarMgr.LoadCalendarsFromDB();
+
     sLog.outString("Loading ReservedNames...");
     sObjectMgr.LoadReservedPlayersNames();
 
@@ -1313,6 +1327,7 @@ void World::SetInitialWorldSettings()
     sScriptMgr.LoadGameObjectScripts();                     // must be after load Creature/Gameobject(Template/Data)
     sScriptMgr.LoadGameObjectTemplateScripts();             // must be after load Creature/Gameobject(Template/Data)
     sScriptMgr.LoadEventScripts();                          // must be after load Creature/Gameobject(Template/Data)
+    sScriptMgr.LoadCreatureDeathScripts();                  // must be after load Creature/Gameobject(Template/Data)
     sLog.outString(">>> Scripts loaded");
     sLog.outString();
 
@@ -1320,10 +1335,10 @@ void World::SetInitialWorldSettings()
     sScriptMgr.LoadDbScriptStrings();
 
     sLog.outString("Loading CreatureEventAI Texts...");
-    sEventAIMgr.LoadCreatureEventAI_Texts(false);       // false, will checked in LoadCreatureEventAI_Scripts
+    sEventAIMgr.LoadCreatureEventAI_Texts(false);           // false, will checked in LoadCreatureEventAI_Scripts
 
     sLog.outString("Loading CreatureEventAI Summons...");
-    sEventAIMgr.LoadCreatureEventAI_Summons(false);     // false, will checked in LoadCreatureEventAI_Scripts
+    sEventAIMgr.LoadCreatureEventAI_Summons(false);         // false, will checked in LoadCreatureEventAI_Scripts
 
     sLog.outString("Loading CreatureEventAI Scripts...");
     sEventAIMgr.LoadCreatureEventAI_Scripts();
@@ -1644,19 +1659,7 @@ namespace MaNGOS
                 while (char* line = lineFromMessage(pos))
                 {
                     WorldPacket* data = new WorldPacket();
-
-                    uint32 lineLength = (line ? strlen(line) : 0) + 1;
-
-                    data->Initialize(SMSG_MESSAGECHAT, 100);// guess size
-                    *data << uint8(CHAT_MSG_SYSTEM);
-                    *data << uint32(LANG_UNIVERSAL);
-                    *data << uint64(0);
-                    *data << uint32(0);                     // can be chat msg group or something
-                    *data << uint64(0);
-                    *data << uint32(lineLength);
-                    *data << line;
-                    *data << uint8(0);
-
+                    ChatHandler::BuildChatPacket(*data, CHAT_MSG_SYSTEM, line);
                     data_list.push_back(data);
                 }
             }

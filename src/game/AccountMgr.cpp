@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,7 +21,7 @@
 #include "ObjectAccessor.h"
 #include "ObjectGuid.h"
 #include "Player.h"
-#include "Policies/SingletonImp.h"
+#include "Policies/Singleton.h"
 #include "Util.h"
 #include "Auth/Sha1.h"
 
@@ -49,6 +49,26 @@ AccountOpResult AccountMgr::CreateAccount(std::string username, std::string pass
     }
 
     if (!LoginDatabase.PExecute("INSERT INTO account(username,sha_pass_hash,joindate) VALUES('%s','%s',NOW())", username.c_str(), CalculateShaPassHash(username, password).c_str()))
+        return AOR_DB_INTERNAL_ERROR;                       // unexpected error
+    LoginDatabase.Execute("INSERT INTO realmcharacters (realmid, acctid, numchars) SELECT realmlist.id, account.id, 0 FROM realmlist,account LEFT JOIN realmcharacters ON acctid=account.id WHERE acctid IS NULL");
+
+    return AOR_OK;                                          // everything's fine
+}
+
+AccountOpResult AccountMgr::CreateAccount(std::string username, std::string password, uint32 expansion)
+{
+    if (utf8length(username) > MAX_ACCOUNT_STR)
+        return AOR_NAME_TOO_LONG;                           // username's too long
+
+    normalizeString(username);
+    normalizeString(password);
+
+    if (GetId(username))
+    {
+        return AOR_NAME_ALREDY_EXIST;                       // username does already exist
+    }
+
+    if (!LoginDatabase.PExecute("INSERT INTO account(username,sha_pass_hash,joindate,expansion) VALUES('%s','%s',NOW(),'%u')", username.c_str(), CalculateShaPassHash(username, password).c_str(), expansion))
         return AOR_DB_INTERNAL_ERROR;                       // unexpected error
     LoginDatabase.Execute("INSERT INTO realmcharacters (realmid, acctid, numchars) SELECT realmlist.id, account.id, 0 FROM realmlist,account LEFT JOIN realmcharacters ON acctid=account.id WHERE acctid IS NULL");
 

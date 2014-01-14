@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@
 #include "Config.h"
 #include "ace/Configuration_Import_Export.h"
 
-#include "Policies/SingletonImp.h"
+#include "Policies/Singleton.h"
 
 INSTANTIATE_SINGLETON_1(Config);
 
@@ -99,13 +99,11 @@ bool Config::GetBoolDefault(const char* name, bool def)
         return false;
 }
 
-
 int32 Config::GetIntDefault(const char* name, int32 def)
 {
     ACE_TString val;
     return GetValueHelper(mConf, name, val) ? atoi(val.c_str()) : def;
 }
-
 
 float Config::GetFloatDefault(const char* name, float def)
 {

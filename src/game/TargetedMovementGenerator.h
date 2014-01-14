@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,8 +21,8 @@
 
 #include "MovementGenerator.h"
 #include "FollowerReference.h"
-#include "PathFinder.h"
-#include "Unit.h"
+
+class PathFinder;
 
 class MANGOS_DLL_SPEC TargetedMovementGeneratorBase
 {
@@ -51,10 +51,7 @@ class MANGOS_DLL_SPEC TargetedMovementGeneratorMedium
     public:
         bool Update(T&, const uint32&);
 
-        bool IsReachable() const
-        {
-            return (i_path) ? (i_path->getPathType() & PATHFIND_NORMAL) : true;
-        }
+        bool IsReachable() const;
 
         Unit* GetTarget() const { return i_target.getTarget(); }
 
@@ -62,6 +59,8 @@ class MANGOS_DLL_SPEC TargetedMovementGeneratorMedium
 
     protected:
         void _setTargetLocation(T&, bool updateDestination);
+        bool RequiresNewPosition(T& owner, float x, float y, float z) const;
+        virtual float GetDynamicTargetDistance(T& owner, bool forRangeCheck) const { return i_offset; }
 
         ShortTimeTracker i_recheckDistance;
         float i_offset;
@@ -76,8 +75,6 @@ template<class T>
 class MANGOS_DLL_SPEC ChaseMovementGenerator : public TargetedMovementGeneratorMedium<T, ChaseMovementGenerator<T> >
 {
     public:
-        ChaseMovementGenerator(Unit& target)
-            : TargetedMovementGeneratorMedium<T, ChaseMovementGenerator<T> >(target) {}
         ChaseMovementGenerator(Unit& target, float offset, float angle)
             : TargetedMovementGeneratorMedium<T, ChaseMovementGenerator<T> >(target, offset, angle) {}
         ~ChaseMovementGenerator() {}
@@ -89,11 +86,14 @@ class MANGOS_DLL_SPEC ChaseMovementGenerator : public TargetedMovementGeneratorM
         void Interrupt(T&);
         void Reset(T&);
 
-        static void _clearUnitStateMove(T& u) { u.clearUnitState(UNIT_STAT_CHASE_MOVE); }
-        static void _addUnitStateMove(T& u)  { u.addUnitState(UNIT_STAT_CHASE_MOVE); }
+        static void _clearUnitStateMove(T& u);
+        static void _addUnitStateMove(T& u);
         bool EnableWalking() const { return false;}
-        bool _lostTarget(T& u) const { return u.getVictim() != this->GetTarget(); }
+        bool _lostTarget(T& u) const;
         void _reachTarget(T&);
+
+    protected:
+        float GetDynamicTargetDistance(T& owner, bool forRangeCheck) const override;
 };
 
 template<class T>
@@ -113,13 +113,17 @@ class MANGOS_DLL_SPEC FollowMovementGenerator : public TargetedMovementGenerator
         void Interrupt(T&);
         void Reset(T&);
 
-        static void _clearUnitStateMove(T& u) { u.clearUnitState(UNIT_STAT_FOLLOW_MOVE); }
-        static void _addUnitStateMove(T& u)  { u.addUnitState(UNIT_STAT_FOLLOW_MOVE); }
+        static void _clearUnitStateMove(T& u);
+        static void _addUnitStateMove(T& u);
         bool EnableWalking() const;
         bool _lostTarget(T&) const { return false; }
         void _reachTarget(T&) {}
+
     private:
         void _updateSpeed(T& u);
+
+    protected:
+        float GetDynamicTargetDistance(T& owner, bool forRangeCheck) const override;
 };
 
 #endif

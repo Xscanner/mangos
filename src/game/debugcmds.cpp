@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -122,58 +122,60 @@ bool ChatHandler::HandleDebugSendOpcodeCommand(char* /*args*/)
     if (!unit || (unit->GetTypeId() != TYPEID_PLAYER))
         unit = m_session->GetPlayer();
 
-    std::ifstream ifs("opcode.txt");
-    if (ifs.bad())
+    std::ifstream stream("opcode.txt");
+    if (!stream.is_open())
         return false;
 
     uint32 opcode;
-    ifs >> opcode;
-
-    WorldPacket data(opcode, 0);
-
-    while (!ifs.eof())
+    if (!stream >> opcode)
     {
-        std::string type;
-        ifs >> type;
+        stream.close();
+        return false;
+    }
 
+    WorldPacket data(Opcodes(opcode), 0);
+
+    std::string type;
+    while (stream >> type)
+    {
         if (type == "")
             break;
 
         if (type == "uint8")
         {
-            uint16 val1;
-            ifs >> val1;
-            data << uint8(val1);
+            uint16 value;
+            stream >> value;
+            data << uint8(value);
         }
         else if (type == "uint16")
         {
-            uint16 val2;
-            ifs >> val2;
-            data << val2;
+            uint16 value;
+            stream >> value;
+            data << value;
         }
         else if (type == "uint32")
         {
-            uint32 val3;
-            ifs >> val3;
-            data << val3;
+            uint32 value;
+            stream >> value;
+            data << value;
         }
         else if (type == "uint64")
         {
-            uint64 val4;
-            ifs >> val4;
-            data << val4;
+            uint64 value;
+            stream >> value;
+            data << value;
         }
         else if (type == "float")
         {
-            float val5;
-            ifs >> val5;
-            data << val5;
+            float value;
+            stream >> value;
+            data << value;
         }
         else if (type == "string")
         {
-            std::string val6;
-            ifs >> val6;
-            data << val6;
+            std::string value;
+            stream >> value;
+            data << value;
         }
         else if (type == "pguid")
         {
@@ -185,11 +187,15 @@ bool ChatHandler::HandleDebugSendOpcodeCommand(char* /*args*/)
             break;
         }
     }
-    ifs.close();
-    DEBUG_LOG("Sending opcode %u", data.GetOpcode());
+    stream.close();
+
+    DEBUG_LOG("Sending opcode %u, %s", data.GetOpcode(), data.GetOpcodeName());
+
     data.hexlike();
     ((Player*)unit)->GetSession()->SendPacket(&data);
+
     PSendSysMessage(LANG_COMMAND_OPCODESENT, data.GetOpcode(), unit->GetName());
+
     return true;
 }
 
@@ -306,7 +312,7 @@ bool ChatHandler::HandleDebugSendChatMsgCommand(char* args)
         return false;
 
     WorldPacket data;
-    ChatHandler::FillMessageData(&data, m_session, type, 0, "chan", m_session->GetPlayer()->GetObjectGuid(), msg, m_session->GetPlayer());
+    ChatHandler::BuildChatPacket(data, ChatMsg(type), msg, LANG_UNIVERSAL, CHAT_TAG_NONE, m_session->GetPlayer()->GetObjectGuid(), m_session->GetPlayerName());
     m_session->SendPacket(&data);
     return true;
 }
@@ -1097,7 +1103,7 @@ bool ChatHandler::HandleDebugSpellModsCommand(char* args)
     if (!typeStr)
         return false;
 
-    uint16 opcode;
+    Opcodes opcode;
     if (strncmp(typeStr, "flat", strlen(typeStr)) == 0)
         opcode = SMSG_SET_FLAT_SPELL_MODIFIER;
     else if (strncmp(typeStr, "pct", strlen(typeStr)) == 0)

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -570,7 +570,7 @@ void MaNGOS::LocalizedPacketDo<Builder>::operator()(Player* p)
         if (i_data_cache.size() < cache_idx + 1)
             i_data_cache.resize(cache_idx + 1);
 
-        data = new WorldPacket(SMSG_MESSAGECHAT, 200);
+        data = new WorldPacket();
 
         i_builder(*data, loc_idx);
 

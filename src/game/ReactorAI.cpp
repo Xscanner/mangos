@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -54,7 +54,7 @@ ReactorAI::AttackStart(Unit* p)
         m_creature->SetInCombatWith(p);
         p->SetInCombatWith(m_creature);
 
-        m_creature->GetMotionMaster()->MoveChase(p);
+        HandleMovementOnAttackStart(p);
     }
 }
 
@@ -109,7 +109,7 @@ ReactorAI::EnterEvadeMode()
         DEBUG_FILTER_LOG(LOG_FILTER_AI_AND_MOVEGENSS, "Creature stopped attacking, victim %s [guid=%u]", victim->isAlive() ? "out run him" : "is dead", m_creature->GetGUIDLow());
     }
 
-    m_creature->RemoveAllAuras();
+    m_creature->RemoveAllAurasOnEvade();
     m_creature->DeleteThreatList();
     i_victimGuid.Clear();
     m_creature->CombatStop(true);

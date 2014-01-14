@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -29,6 +29,7 @@
 #include "Util.h"
 #include "Language.h"
 #include "World.h"
+#include "Calendar.h"
 
 //// MemberSlot ////////////////////////////////////////////
 void MemberSlot::SetMemberStats(Player* player)
@@ -465,7 +466,6 @@ bool Guild::LoadMembersFromDB(QueryResult* guildMembersResult)
         }
 
         members[lowguid]      = newmember;
-
     }
     while (guildMembersResult->NextRow());
 
@@ -563,7 +563,7 @@ void Guild::BroadcastToGuild(WorldSession* session, const std::string& msg, uint
     if (session && session->GetPlayer() && HasRankRight(session->GetPlayer()->GetRank(), GR_RIGHT_GCHATSPEAK))
     {
         WorldPacket data;
-        ChatHandler::FillMessageData(&data, session, CHAT_MSG_GUILD, language, msg.c_str());
+        ChatHandler::BuildChatPacket(data, CHAT_MSG_GUILD, msg.c_str(), LANG_UNIVERSAL, session->GetPlayer()->GetChatTag(), session->GetPlayer()->GetObjectGuid());
 
         for (MemberList::const_iterator itr = members.begin(); itr != members.end(); ++itr)
         {
@@ -582,7 +582,7 @@ void Guild::BroadcastToOfficers(WorldSession* session, const std::string& msg, u
         for (MemberList::const_iterator itr = members.begin(); itr != members.end(); ++itr)
         {
             WorldPacket data;
-            ChatHandler::FillMessageData(&data, session, CHAT_MSG_OFFICER, language, msg.c_str());
+            ChatHandler::BuildChatPacket(data, CHAT_MSG_OFFICER, msg.c_str(), LANG_UNIVERSAL, session->GetPlayer()->GetChatTag(), session->GetPlayer()->GetObjectGuid());
 
             Player* pl = ObjectAccessor::FindPlayer(ObjectGuid(HIGHGUID_PLAYER, itr->first));
 
@@ -613,6 +613,39 @@ void Guild::BroadcastPacketToRank(WorldPacket* packet, uint32 rankId)
                 player->GetSession()->SendPacket(packet);
         }
     }
+}
+
+// add new event to all already connected guild memebers
+void Guild::MassInviteToEvent(WorldSession* session, uint32 minLevel, uint32 maxLevel, uint32 minRank)
+{
+    uint32 count = 0;
+
+    WorldPacket data(SMSG_CALENDAR_FILTER_GUILD);
+    data << uint32(count); // count placeholder
+
+    for (MemberList::const_iterator itr = members.begin(); itr != members.end(); ++itr)
+    {
+        // not sure if needed, maybe client checks it as well
+        if (count >= CALENDAR_MAX_INVITES)
+        {
+            sCalendarMgr.SendCalendarCommandResult(session->GetPlayer(), CALENDAR_ERROR_INVITES_EXCEEDED);
+            return;
+        }
+
+        MemberSlot const* member = &itr->second;
+        uint32 level = Player::GetLevelFromDB(member->guid);
+
+        if (member->guid != session->GetPlayer()->GetObjectGuid() && level >= minLevel && level <= maxLevel && member->RankId <= minRank)
+        {
+            data << member->guid.WriteAsPacked();
+            data << uint8(level);
+            ++count;
+        }
+    }
+
+    data.put<uint32>(0, count);
+
+    session->SendPacket(&data);
 }
 
 void Guild::CreateRank(std::string name_, uint32 rights)
@@ -899,7 +932,6 @@ void Guild::LoadGuildEventLogFromDB()
 
         // Add entry to list
         m_GuildEventLog.push_front(NewEvent);
-
     }
     while (result->NextRow());
     delete result;
@@ -1428,7 +1460,6 @@ bool Guild::LoadBankRightsFromDB(QueryResult* guildBankTabRightsResult)
         uint16 SlotPerDay  = fields[4].GetUInt16();
 
         SetBankRightsAndSlots(rankId, TabId, right, SlotPerDay, false);
-
     }
     while (guildBankTabRightsResult->NextRow());
 
@@ -1520,7 +1551,6 @@ void Guild::LoadGuildBankEventLogFromDB()
             // add event to list
             // events are ordered from oldest (in beginning) to latest (in the end)
             m_GuildBankEventLog_Money.push_front(NewEvent);
-
     }
     while (result->NextRow());
     delete result;
@@ -2063,7 +2093,6 @@ void Guild::SwapItems(Player* pl, uint8 BankTab, uint8 BankTabSlot, uint8 BankTa
         DisplayGuildBankContentUpdate(BankTabDst, BankTabSlotDst);
 }
 
-
 void Guild::MoveFromBankToChar(Player* pl, uint8 BankTab, uint8 BankTabSlot, uint8 PlayerBag, uint8 PlayerSlot, uint32 SplitedAmount)
 {
     Item* pItemBank = GetItem(BankTab, BankTabSlot);
@@ -2211,7 +2240,6 @@ void Guild::MoveFromBankToChar(Player* pl, uint8 BankTab, uint8 BankTabSlot, uin
     }
     DisplayGuildBankContentUpdate(BankTab, BankTabSlot);
 }
-
 
 void Guild::MoveFromCharToBank(Player* pl, uint8 PlayerBag, uint8 PlayerSlot, uint8 BankTab, uint8 BankTabSlot, uint32 SplitedAmount)
 {

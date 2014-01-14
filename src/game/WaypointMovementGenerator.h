@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,14 +27,13 @@
 
 #include "MovementGenerator.h"
 #include "WaypointManager.h"
-
-#include "Player.h"
+#include "DBCStructure.h"
 
 #include <vector>
 #include <set>
 
 #define FLIGHT_TRAVEL_UPDATE  100
-#define STOP_TIME_FOR_PLAYER  3 * MINUTE * IN_MILLISECONDS  // 3 Minutes
+#define STOP_TIME_FOR_PLAYER  (3 * MINUTE * IN_MILLISECONDS)// 3 Minutes
 
 template<class T, class P>
 class MANGOS_DLL_SPEC PathMovementBase
@@ -66,7 +65,7 @@ class MANGOS_DLL_SPEC WaypointMovementGenerator<Creature>
   public PathMovementBase<Creature, WaypointPath const*>
 {
     public:
-        WaypointMovementGenerator(Creature&) : i_nextMoveTime(0), m_isArrivalDone(false) {}
+        WaypointMovementGenerator(Creature&) : i_nextMoveTime(0), m_isArrivalDone(false), m_lastReachedWaypoint(0) {}
         ~WaypointMovementGenerator() { i_path = NULL; }
         void Initialize(Creature& u);
         void Interrupt(Creature&);
@@ -81,31 +80,25 @@ class MANGOS_DLL_SPEC WaypointMovementGenerator<Creature>
         // now path movement implmementation
         void LoadPath(Creature& c);
 
-        bool GetResetPosition(Creature&, float& x, float& y, float& z);
+        bool GetResetPosition(Creature&, float& x, float& y, float& z) const;
+
+        void AddToWaypointPauseTime(int32 waitTimeDiff);
+
+        uint32 getLastReachedWaypoint() const { return m_lastReachedWaypoint; }
 
     private:
-
         void Stop(int32 time) { i_nextMoveTime.Reset(time); }
-
-        bool Stopped() { return !i_nextMoveTime.Passed(); }
-
-        bool CanMove(int32 diff)
-        {
-            i_nextMoveTime.Update(diff);
-            return i_nextMoveTime.Passed();
-        }
+        bool Stopped(Creature& u);
+        bool CanMove(int32 diff, Creature& u);
 
         void OnArrived(Creature&);
         void StartMove(Creature&);
 
-        void StartMoveNow(Creature& creature)
-        {
-            i_nextMoveTime.Reset(0);
-            StartMove(creature);
-        }
+        void StartMoveNow(Creature& creature);
 
         ShortTimeTracker i_nextMoveTime;
         bool m_isArrivalDone;
+        uint32 m_lastReachedWaypoint;
 };
 
 /** FlightPathMovementGenerator generates movement of the player for the paths
@@ -134,7 +127,7 @@ class MANGOS_DLL_SPEC FlightPathMovementGenerator
         void SetCurrentNodeAfterTeleport();
         void SkipCurrentNode() { ++i_currentNode; }
         void DoEventIfAny(Player& player, TaxiPathNodeEntry const& node, bool departure);
-        bool GetResetPosition(Player&, float& x, float& y, float& z);
+        bool GetResetPosition(Player&, float& x, float& y, float& z) const;
 };
 
 #endif

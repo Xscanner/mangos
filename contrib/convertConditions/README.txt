@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+# This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
 #
 
 This small Python script is intended to help with the convertion

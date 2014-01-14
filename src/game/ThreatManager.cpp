@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -150,7 +150,6 @@ void HostileReference::updateOnlineStatus()
         }
         else
             accessible = true;
-
     }
     setAccessibleState(accessible);
     setOnlineOfflineState(online);

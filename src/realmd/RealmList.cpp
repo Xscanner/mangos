@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,14 +24,14 @@
 #include "RealmList.h"
 #include "AuthCodes.h"
 #include "Util.h"                                           // for Tokens typedef
-#include "Policies/SingletonImp.h"
+#include "Policies/Singleton.h"
 #include "Database/DatabaseEnv.h"
 
 INSTANTIATE_SINGLETON_1(RealmList);
 
 extern DatabaseType LoginDatabase;
 
-// will only support WoW 1.12.1/1.12.2 , WoW:TBC 2.4.3 and official release for WoW:WotLK and later, client builds 10505, 8606, 6005, 5875
+// will only support WoW 1.12.1/1.12.2/1.12.3 , WoW:TBC 2.4.3 and official release for WoW:WotLK and later, client builds 10505, 8606, 6141, 6005, 5875
 // if you need more from old build then add it in cases in realmd sources code
 // list sorted from high to low build and first build used as low bound for accepted by default range (any > it will accepted by realmd at least)
 
@@ -43,6 +43,7 @@ static RealmBuildInfo ExpectedRealmdClientBuilds[] =
     {11159, 3, 3, 0, 'a'},
     {10505, 3, 2, 2, 'a'},
     {8606,  2, 4, 3, ' '},
+    {6141,  1, 12, 3, ' '},
     {6005,  1, 12, 2, ' '},
     {5875,  1, 12, 1, ' '},
     {0,     0, 0, 0, ' '}                                   // terminator

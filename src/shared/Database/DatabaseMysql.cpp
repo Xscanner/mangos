@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@
 #ifndef DO_POSTGRESQL
 
 #include "Util.h"
-#include "Policies/SingletonImp.h"
+#include "Policies/Singleton.h"
 #include "Platform/Define.h"
 #include "Threading.h"
 #include "DatabaseEnv.h"
@@ -304,7 +304,7 @@ unsigned long MySQLConnection::escape_string(char* to, const char* from, unsigne
     if (!mMysql || !to || !from || !length)
         return 0;
 
-    return(mysql_real_escape_string(mMysql, to, from, length));
+    return (mysql_real_escape_string(mMysql, to, from, length));
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -312,7 +312,6 @@ SqlPreparedStatement* MySQLConnection::CreateStatement(const std::string& fmt)
 {
     return new MySqlPreparedStatement(fmt, *this, mMysql);
 }
-
 
 //////////////////////////////////////////////////////////////////////////
 MySqlPreparedStatement::MySqlPreparedStatement(const std::string& fmt, SqlConnection& conn, MYSQL* mysql) : SqlPreparedStatement(fmt, conn),

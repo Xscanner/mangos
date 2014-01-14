@@ -1,5 +1,5 @@
 /*
-* Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+* This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
 *
 * This program is free software; you can redistribute it and/or modify
 * it under the terms of the GNU General Public License as published by
@@ -68,7 +68,6 @@ enum AchievementFlags
     ACHIEVEMENT_FLAG_BAR                    = 0x00000080,   // ACHIEVEMENT_FLAG_HAS_PROGRESS_BAR Show as progress bar (value / max vale) depend from other flag (by def use last criteria value)
     ACHIEVEMENT_FLAG_REALM_FIRST_REACH      = 0x00000100,   // ACHIEVEMENT_FLAG_SERVER_FIRST
     ACHIEVEMENT_FLAG_REALM_FIRST_KILL       = 0x00000200,   //
-
 };
 
 enum AchievementCriteriaCondition
@@ -399,7 +398,7 @@ enum SummonPropFlags
     SUMMON_PROP_FLAG_UNK7               = 0x0040,           // 12 spells in 3.0.3, no idea
     SUMMON_PROP_FLAG_UNK8               = 0x0080,           // 4 spells in 3.0.3, no idea
     SUMMON_PROP_FLAG_UNK9               = 0x0100,           // 51 spells in 3.0.3, no idea, many quest related
-    SUMMON_PROP_FLAG_UNK10              = 0x0200,           // 51 spells in 3.0.3, something defensive
+    SUMMON_PROP_FLAG_INHERIT_FACTION    = 0x0200,           // 51 spells in 3.0.3, something defensive (Faction inheriting is much guesswork)
     SUMMON_PROP_FLAG_UNK11              = 0x0400,           // 3 spells, requires something near?
     SUMMON_PROP_FLAG_UNK12              = 0x0800,           // 30 spells in 3.0.3, no idea
     SUMMON_PROP_FLAG_UNK13              = 0x1000,           // 8 spells in 3.0.3, siege vehicle

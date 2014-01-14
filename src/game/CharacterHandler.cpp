@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -39,6 +39,7 @@
 #include "ArenaTeam.h"
 #include "Language.h"
 #include "SpellMgr.h"
+#include "Calendar.h"
 
 // Playerbot mod:
 #include "playerbot/PlayerbotMgr.h"
@@ -567,6 +568,8 @@ void WorldSession::HandleCharDeleteOpcode(WorldPacket& recv_data)
         sLog.outCharDump(dump.c_str(), GetAccountId(), lowguid, name.c_str());
     }
 
+    sCalendarMgr.RemovePlayerCalendar(guid);
+
     Player::DeleteFromDB(guid, GetAccountId());
 
     WorldPacket data(SMSG_CHAR_DELETE, 1);
@@ -587,7 +590,7 @@ void WorldSession::HandlePlayerLoginOpcode(WorldPacket& recv_data)
 
     m_playerLoading = true;
 
-    DEBUG_LOG("WORLD: Recvd Player Logon Message");
+    DEBUG_LOG("WORLD: Received opcode Player Logon Message");
 
     LoginQueryHolder* holder = new LoginQueryHolder(GetAccountId(), playerGuid);
     if (!holder->Initialize())
@@ -602,7 +605,7 @@ void WorldSession::HandlePlayerLoginOpcode(WorldPacket& recv_data)
 
 // Playerbot mod. Can't easily reuse HandlePlayerLoginOpcode for logging in bots because it assumes
 // a WorldSession exists for the bot. The WorldSession for a bot is created after the character is loaded.
-void PlayerbotMgr::AddPlayerBot(ObjectGuid playerGuid)
+void PlayerbotMgr::LoginPlayerBot(ObjectGuid playerGuid)
 {
     // has bot already been added?
     if (sObjectMgr.GetPlayer(playerGuid))
@@ -752,13 +755,26 @@ void WorldSession::HandlePlayerLogin(LoginQueryHolder* holder)
         }
     }
 
-    if (!pCurrChar->GetMap()->Add(pCurrChar))
+    uint32 miscRequirement = 0;
+    AreaLockStatus lockStatus = AREA_LOCKSTATUS_OK;
+    if (AreaTrigger const* at = sObjectMgr.GetMapEntranceTrigger(pCurrChar->GetMapId()))
+        lockStatus = pCurrChar->GetAreaTriggerLockStatus(at, pCurrChar->GetDifficulty(pCurrChar->GetMap()->IsRaid()), miscRequirement);
+    else
+    {
+        // Some basic checks in case of a map without areatrigger
+        MapEntry const* mapEntry = sMapStore.LookupEntry(pCurrChar->GetMapId());
+        if (!mapEntry)
+            lockStatus = AREA_LOCKSTATUS_UNKNOWN_ERROR;
+        else if (pCurrChar->GetSession()->Expansion() < mapEntry->Expansion())
+            lockStatus = AREA_LOCKSTATUS_INSUFFICIENT_EXPANSION;
+    }
+    if (lockStatus != AREA_LOCKSTATUS_OK || !pCurrChar->GetMap()->Add(pCurrChar))
     {
         // normal delayed teleport protection not applied (and this correct) for this case (Player object just created)
         AreaTrigger const* at = sObjectMgr.GetGoBackTrigger(pCurrChar->GetMapId());
         if (at)
-            pCurrChar->TeleportTo(at->target_mapId, at->target_X, at->target_Y, at->target_Z, pCurrChar->GetOrientation());
-        else
+            lockStatus = pCurrChar->GetAreaTriggerLockStatus(at, pCurrChar->GetDifficulty(pCurrChar->GetMap()->IsRaid()), miscRequirement);
+        if (!at || lockStatus != AREA_LOCKSTATUS_OK || !pCurrChar->TeleportTo(at->target_mapId, at->target_X, at->target_Y, at->target_Z, pCurrChar->GetOrientation()))
             pCurrChar->TeleportToHomebind();
     }
 
@@ -867,7 +883,7 @@ void WorldSession::HandlePlayerLogin(LoginQueryHolder* holder)
 
 void WorldSession::HandleSetFactionAtWarOpcode(WorldPacket& recv_data)
 {
-    DEBUG_LOG("WORLD: Received CMSG_SET_FACTION_ATWAR");
+    DEBUG_LOG("WORLD: Received opcode CMSG_SET_FACTION_ATWAR");
 
     uint32 repListID;
     uint8  flag;
@@ -912,7 +928,7 @@ void WorldSession::HandleTutorialResetOpcode(WorldPacket& /*recv_data*/)
 
 void WorldSession::HandleSetWatchedFactionOpcode(WorldPacket& recv_data)
 {
-    DEBUG_LOG("WORLD: Received CMSG_SET_WATCHED_FACTION");
+    DEBUG_LOG("WORLD: Received opcode CMSG_SET_WATCHED_FACTION");
     int32 repId;
     recv_data >> repId;
     GetPlayer()->SetInt32Value(PLAYER_FIELD_WATCHED_FACTION_INDEX, repId);
@@ -920,7 +936,7 @@ void WorldSession::HandleSetWatchedFactionOpcode(WorldPacket& recv_data)
 
 void WorldSession::HandleSetFactionInactiveOpcode(WorldPacket& recv_data)
 {
-    DEBUG_LOG("WORLD: Received CMSG_SET_FACTION_INACTIVE");
+    DEBUG_LOG("WORLD: Received opcode CMSG_SET_FACTION_INACTIVE");
     uint32 replistid;
     uint8 inactive;
     recv_data >> replistid >> inactive;

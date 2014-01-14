@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -155,9 +155,17 @@ enum Powers
 
 #define MAX_POWERS                        7
 
+/**
+ * The different spell schools that are available, used in both damage calculation
+ * and spell casting to decide what should be affected, the SPELL_SCHOOL_NORMAL
+ * is the armor, others should be self explanatory.
+ *
+ * Note that these are the values to use for changing ie, the armor via a
+ * Modifier, and it is the Modifier::m_miscValue that should be set.
+ */
 enum SpellSchools
 {
-    SPELL_SCHOOL_NORMAL                 = 0,
+    SPELL_SCHOOL_NORMAL                 = 0,                //< Physical, Armor
     SPELL_SCHOOL_HOLY                   = 1,
     SPELL_SCHOOL_FIRE                   = 2,
     SPELL_SCHOOL_NATURE                 = 3,
@@ -168,6 +176,9 @@ enum SpellSchools
 
 #define MAX_SPELL_SCHOOL                  7
 
+/**
+ * A bitmask of the available SpellSchools. Used for convenience
+ */
 enum SpellSchoolMask
 {
     SPELL_SCHOOL_MASK_NONE    = 0x00,                       // not exist
@@ -272,7 +283,7 @@ enum SpellAttributesEx
     SPELL_ATTR_EX_UNK0                         = 0x00000001,// 0
     SPELL_ATTR_EX_DRAIN_ALL_POWER              = 0x00000002,// 1 use all power (Only paladin Lay of Hands and Bunyanize)
     SPELL_ATTR_EX_CHANNELED_1                  = 0x00000004,// 2 channeled 1
-    SPELL_ATTR_EX_UNK3                         = 0x00000008,// 3
+    SPELL_ATTR_EX_CANT_REFLECTED               = 0x00000008,// 3 used for detect can or not spell reflected
     SPELL_ATTR_EX_UNK4                         = 0x00000010,// 4
     SPELL_ATTR_EX_NOT_BREAK_STEALTH            = 0x00000020,// 5 Not break stealth
     SPELL_ATTR_EX_CHANNELED_2                  = 0x00000040,// 6 channeled 2
@@ -307,7 +318,7 @@ enum SpellAttributesEx2
 {
     SPELL_ATTR_EX2_UNK0                        = 0x00000001,// 0
     SPELL_ATTR_EX2_UNK1                        = 0x00000002,// 1
-    SPELL_ATTR_EX2_CANT_REFLECTED              = 0x00000004,// 2 ? used for detect can or not spell reflected // do not need LOS (e.g. 18220 since 3.3.3)
+    SPELL_ATTR_EX2_IGNORE_LOS                  = 0x00000004,// 2 do not need LOS (e.g. 18220 since 3.3.3) // changed meaning from ? used for detect can or not spell reflected
     SPELL_ATTR_EX2_UNK3                        = 0x00000008,// 3 auto targeting? (e.g. fishing skill enhancement items since 3.3.3)
     SPELL_ATTR_EX2_UNK4                        = 0x00000010,// 4
     SPELL_ATTR_EX2_AUTOREPEAT_FLAG             = 0x00000020,// 5
@@ -349,7 +360,7 @@ enum SpellAttributesEx3
     SPELL_ATTR_EX3_UNK5                        = 0x00000020,// 5
     SPELL_ATTR_EX3_UNK6                        = 0x00000040,// 6
     SPELL_ATTR_EX3_UNK7                        = 0x00000080,// 7 create a separate (de)buff stack for each caster
-    SPELL_ATTR_EX3_UNK8                        = 0x00000100,// 8
+    SPELL_ATTR_EX3_TARGET_ONLY_PLAYER          = 0x00000100,// 8 Can target only player
     SPELL_ATTR_EX3_UNK9                        = 0x00000200,// 9
     SPELL_ATTR_EX3_MAIN_HAND                   = 0x00000400,// 10 Main hand weapon required
     SPELL_ATTR_EX3_BATTLEGROUND                = 0x00000800,// 11 Can casted only on battleground
@@ -1199,11 +1210,11 @@ enum SpellImmunity
 
 #define MAX_SPELL_IMMUNITY           6
 
-enum WeaponAttackType
+enum WeaponAttackType                                       //< The different weapon attack-types
 {
-    BASE_ATTACK   = 0,
-    OFF_ATTACK    = 1,
-    RANGED_ATTACK = 2
+    BASE_ATTACK   = 0,                                      //< Main-hand weapon
+    OFF_ATTACK    = 1,                                      //< Off-hand weapon
+    RANGED_ATTACK = 2                                       //< Ranged weapon, bow/wand etc.
 };
 
 #define MAX_ATTACK  3
@@ -1294,7 +1305,7 @@ enum Targets
     TARGET_DIRECTLY_FORWARD            = 89,
     TARGET_NONCOMBAT_PET               = 90,
     TARGET_91                          = 91,
-    TARGET_92                          = 92,
+    TARGET_SUMMONER                    = 92,
     TARGET_CONTROLLED_VEHICLE          = 94,
     TARGET_95                          = 95,
     TARGET_VEHICLE_PASSENGER_0         = 96,
@@ -1308,7 +1319,7 @@ enum Targets
     TARGET_IN_FRONT_OF_CASTER_30       = 104,
     TARGET_105                         = 105,               // 1 spell
     TARGET_106                         = 106,
-    TARGET_108                         = 108,               // possible TARGET_WMO(GO?)_IN_FRONT_OF_CASTER(_30 ?)
+    TARGET_GO_IN_FRONT_OF_CASTER_90    = 108,               // possible TARGET_WMO(GO?)_IN_FRONT_OF_CASTER(_30 ?) TODO: Verify the angle!
     TARGET_110                         = 110,
 };
 
@@ -1353,21 +1364,21 @@ enum SpellPreventionType
     SPELL_PREVENTION_TYPE_PACIFY    = 2
 };
 
-// indexes from SpellRange.dbc, listed only special and used in code
+/// indexes from SpellRange.dbc, listed only special and used in code
 enum SpellRangeIndex
 {
-    SPELL_RANGE_IDX_SELF_ONLY = 1,                          // 0.0
-    SPELL_RANGE_IDX_COMBAT    = 2,                          // 5.5 (but dynamic)
-    SPELL_RANGE_IDX_ANYWHERE  = 13,                         // 500000 (anywhere)
+    SPELL_RANGE_IDX_SELF_ONLY = 1,                          //< 0.0
+    SPELL_RANGE_IDX_COMBAT    = 2,                          //< often ~5.5 (but infact dynamic melee combat range)
+    SPELL_RANGE_IDX_ANYWHERE  = 13,                         //< 500000 (anywhere)
 };
 
 enum DamageEffectType
 {
-    DIRECT_DAMAGE           = 0,                            // used for normal weapon damage (not for class abilities or spells)
-    SPELL_DIRECT_DAMAGE     = 1,                            // spell/class abilities damage
+    DIRECT_DAMAGE           = 0,                            //< Used for normal weapon damage (not for class abilities or spells)
+    SPELL_DIRECT_DAMAGE     = 1,                            //< spell/class abilities damage
     DOT                     = 2,
     HEAL                    = 3,
-    NODAMAGE                = 4,                            // used also in case when damage applied to health but not applied to spell channelInterruptFlags/etc
+    NODAMAGE                = 4,                            //< used also in case when damage applied to health but not applied to spell channelInterruptFlags/etc
     SELF_DAMAGE             = 5
 };
 
@@ -1423,9 +1434,9 @@ enum GameObjectFlags
     GO_FLAG_NODESPAWN       = 0x00000020,                   // never despawn, typically for doors, they just change state
     GO_FLAG_TRIGGERED       = 0x00000040,                   // typically, summoned objects. Triggered by spell or other events
     GO_FLAG_UNK_8           = 0x00000080,
-    GO_FLAG_UNK_9           = 0x00000100,                   //? Seen on type 33, possible meaning "destruct in progress"
-    GO_FLAG_UNK_10          = 0x00000200,                   //? Seen on type 33
-    GO_FLAG_UNK_11          = 0x00000400                    //? Seen on type 33, possibly meaning "destructed"
+    GO_FLAG_UNK_9           = 0x00000100,                   //? Seen on type 33, meaning unknown
+    GO_FLAG_UNK_10          = 0x00000200,                   //? Seen on type 33, likely damaged
+    GO_FLAG_UNK_11          = 0x00000400                    //? Seen on type 33, likely destroyed
 };
 
 enum GameObjectDynamicLowFlags
@@ -3026,6 +3037,13 @@ enum TrackedAuraType
 // account with expansion > client supported will rejected at connection by client
 // because if client receive unsupported expansion level it think
 // that it not have expansion installed and reject
+enum Expansions
+{
+    EXPANSION_NONE                      = 0,                // classic
+    EXPANSION_TBC                       = 1,                // TBC
+    EXPANSION_WOTLK                     = 2,                // WotLK
+};
+
 #define MAX_EXPANSION 2
 
 // Maxlevel for expansion

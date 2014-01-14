@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -32,7 +32,7 @@
 #include "World.h"
 #include "Log.h"
 #include "Timer.h"
-#include "Policies/SingletonImp.h"
+#include "Policies/Singleton.h"
 #include "SystemConfig.h"
 #include "Config/Config.h"
 #include "Database/DatabaseEnv.h"
@@ -40,6 +40,7 @@
 #include "RASocket.h"
 #include "Util.h"
 #include "revision_sql.h"
+#include "playerbot/revision_sql.h"
 #include "MaNGOSsoap.h"
 #include "MassMailMgr.h"
 #include "DBCStores.h"
@@ -125,7 +126,6 @@ class RARunnable : public ACE_Based::Runnable
             m_Reactor = new ACE_Reactor(imp, 1 /* 1= delete implementation so we don't have to care */);
 
             m_Acceptor = new RASocket::Acceptor;
-
         }
 
         ~RARunnable()

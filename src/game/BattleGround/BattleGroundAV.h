@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -122,7 +122,6 @@ enum BG_AV_Nodes
     BG_AV_NODES_ERROR                   = 255,
 };
 #define BG_AV_NODES_MAX                 15
-
 
 // for nodeevents we will use event1=node
 // event2 is related to BG_AV_States
@@ -320,18 +319,15 @@ class BattleGroundAV : public BattleGround
 
     public:
         BattleGroundAV();
-        ~BattleGroundAV();
         void Update(uint32 diff) override;
 
         /* inherited from BattlegroundClass */
         virtual void AddPlayer(Player* plr) override;
 
-        virtual void StartingEventCloseDoors() override;
         virtual void StartingEventOpenDoors() override;
         // world states
         virtual void FillInitialWorldStates(WorldPacket& data, uint32& count) override;
 
-        void RemovePlayer(Player* plr, ObjectGuid guid) override;
         void HandleAreaTrigger(Player* source, uint32 trigger) override;
         virtual void Reset() override;
 

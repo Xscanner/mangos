@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -29,8 +29,10 @@
 template<class T>
 void PointMovementGenerator<T>::Initialize(T& unit)
 {
-    if (!unit.IsStopped())
-        unit.StopMoving();
+    if (unit.hasUnitState(UNIT_STAT_CAN_NOT_REACT | UNIT_STAT_NOT_MOVE))
+        return;
+
+    unit.StopMoving();
 
     unit.addUnitState(UNIT_STAT_ROAMING | UNIT_STAT_ROAMING_MOVE);
     Movement::MoveSplineInit init(unit);
@@ -50,15 +52,14 @@ void PointMovementGenerator<T>::Finalize(T& unit)
 template<class T>
 void PointMovementGenerator<T>::Interrupt(T& unit)
 {
+    unit.InterruptMoving();
     unit.clearUnitState(UNIT_STAT_ROAMING | UNIT_STAT_ROAMING_MOVE);
 }
 
 template<class T>
 void PointMovementGenerator<T>::Reset(T& unit)
 {
-    if (!unit.IsStopped())
-        unit.StopMoving();
-
+    unit.StopMoving();
     unit.addUnitState(UNIT_STAT_ROAMING | UNIT_STAT_ROAMING_MOVE);
 }
 
@@ -74,7 +75,9 @@ bool PointMovementGenerator<T>::Update(T& unit, const uint32& diff)
         return true;
     }
 
-    unit.addUnitState(UNIT_STAT_ROAMING_MOVE);
+    if (!unit.hasUnitState(UNIT_STAT_ROAMING_MOVE) && unit.movespline->Finalized())
+        Initialize(unit);
+
     return !unit.movespline->Finalized();
 }
 
@@ -133,11 +136,28 @@ void EffectMovementGenerator::Finalize(Unit& unit)
     if (((Creature&)unit).AI() && unit.movespline->Finalized())
         ((Creature&)unit).AI()->MovementInform(EFFECT_MOTION_TYPE, m_Id);
     // Need restore previous movement since we have no proper states system
-    if (unit.isAlive() && !unit.hasUnitState(UNIT_STAT_CONFUSED | UNIT_STAT_FLEEING))
+    if (unit.isAlive() && !unit.hasUnitState(UNIT_STAT_CONFUSED | UNIT_STAT_FLEEING | UNIT_STAT_NO_COMBAT_MOVEMENT))
     {
         if (Unit* victim = unit.getVictim())
             unit.GetMotionMaster()->MoveChase(victim);
         else
             unit.GetMotionMaster()->Initialize();
     }
+}
+
+void FlyOrLandMovementGenerator::Initialize(Unit& unit)
+{
+    if (unit.hasUnitState(UNIT_STAT_CAN_NOT_REACT | UNIT_STAT_NOT_MOVE))
+        return;
+
+    unit.StopMoving();
+
+    float x, y, z;
+    GetDestination(x, y, z);
+    unit.addUnitState(UNIT_STAT_ROAMING | UNIT_STAT_ROAMING_MOVE);
+    Movement::MoveSplineInit init(unit);
+    init.SetFly();
+    init.SetAnimation((m_liftOff ? Movement::FlyToGround : Movement::ToGround));
+    init.MoveTo(x, y, z, false);
+    init.Launch();
 }

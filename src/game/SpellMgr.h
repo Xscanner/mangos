@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -208,9 +208,9 @@ inline bool IsExplicitDiscoverySpell(SpellEntry const* spellInfo)
 inline bool IsLootCraftingSpell(SpellEntry const* spellInfo)
 {
     return (spellInfo->Effect[EFFECT_INDEX_0] == SPELL_EFFECT_CREATE_RANDOM_ITEM ||
-            // different random cards from Inscription (121==Virtuoso Inking Set category) r without explicit item
+            // different random cards from Inscription (121==Virtuoso Inking Set category) or without explicit item or explicit spells
             (spellInfo->Effect[EFFECT_INDEX_0] == SPELL_EFFECT_CREATE_ITEM_2 &&
-             (spellInfo->TotemCategory[0] != 0 || spellInfo->EffectItemType[0] == 0)));
+             (spellInfo->TotemCategory[0] != 0 || spellInfo->EffectItemType[0] == 0 || spellInfo->Id == 62941)));
 }
 
 int32 CompareAuraRanks(uint32 spellId_1, uint32 spellId_2);
@@ -301,6 +301,9 @@ inline bool IsSpellWithCasterSourceTargetsOnly(SpellEntry const* spellInfo)
 {
     for (int i = 0; i < MAX_EFFECT_INDEX; ++i)
     {
+        if (!spellInfo->Effect[i])                          // Skip junk in DBC
+            continue;
+
         uint32 targetA = spellInfo->EffectImplicitTargetA[i];
         if (targetA && !IsCasterSourceTarget(targetA))
             return false;
@@ -434,6 +437,34 @@ inline bool HasAuraWithTriggerEffect(SpellEntry const* spellInfo)
     return false;
 }
 
+inline bool IsOnlySelfTargeting(SpellEntry const* spellInfo)
+{
+    for (int32 i = 0; i < MAX_EFFECT_INDEX; ++i)
+    {
+        if (!spellInfo->Effect[i])
+            return true;
+
+        switch (spellInfo->EffectImplicitTargetA[i])
+        {
+            case TARGET_SELF:
+            case TARGET_SELF2:
+                break;
+            default:
+                return false;
+        }
+        switch (spellInfo->EffectImplicitTargetB[i])
+        {
+            case TARGET_SELF:
+            case TARGET_SELF2:
+            case TARGET_NONE:
+                break;
+            default:
+                return false;
+        }
+    }
+    return true;
+}
+
 inline bool IsDispelSpell(SpellEntry const* spellInfo)
 {
     return IsSpellHaveEffect(spellInfo, SPELL_EFFECT_DISPEL);
@@ -470,6 +501,10 @@ inline bool IsNeedCastSpellAtFormApply(SpellEntry const* spellInfo, ShapeshiftFo
     return (spellInfo->Stances & (1 << (form - 1)) && !spellInfo->HasAttribute(SPELL_ATTR_EX2_NOT_NEED_SHAPESHIFT));
 }
 
+inline bool IsNeedCastSpellAtOutdoor(SpellEntry const* spellInfo)
+{
+    return (spellInfo->HasAttribute(SPELL_ATTR_OUTDOORS_ONLY) && spellInfo->HasAttribute(SPELL_ATTR_PASSIVE));
+}
 
 inline bool NeedsComboPoints(SpellEntry const* spellInfo)
 {
@@ -676,15 +711,16 @@ enum SpellTargetType
 
 #define MAX_SPELL_TARGET_TYPE 3
 
+// pre-defined targeting for spells
 struct SpellTargetEntry
 {
-    SpellTargetEntry(SpellTargetType type_, uint32 targetEntry_) : type(type_), targetEntry(targetEntry_) {}
-    SpellTargetType type;
+    uint32 spellId;
+    uint32 type;
     uint32 targetEntry;
-};
+    uint32 inverseEffectMask;
 
-typedef std::multimap<uint32, SpellTargetEntry> SpellScriptTarget;
-typedef std::pair<SpellScriptTarget::const_iterator, SpellScriptTarget::const_iterator> SpellScriptTargetBounds;
+    bool CanNotHitWithSpellEffect(SpellEffectIndex effect) const { return inverseEffectMask & (1 << effect); }
+};
 
 // coordinates for spells (accessed using SpellMgr functions)
 struct SpellTargetPosition
@@ -702,9 +738,10 @@ typedef UNORDERED_MAP<uint32, SpellTargetPosition> SpellTargetPositionMap;
 class PetAura
 {
     public:
-        PetAura()
+        PetAura() :
+            removeOnChangePet(false),
+            damage(0)
         {
-            auras.clear();
         }
 
         PetAura(uint32 petEntry, uint32 aura, bool _removeOnChangePet, int _damage) :
@@ -756,6 +793,7 @@ struct SpellArea
     uint32 areaId;                                          // zone/subzone/or 0 is not limited to zone
     uint32 questStart;                                      // quest start (quest must be active or rewarded for spell apply)
     uint32 questEnd;                                        // quest end (quest don't must be rewarded for spell apply)
+    uint16 conditionId;                                     // conditionId - will replace questStart, questEnd, raceMask, gender and questStartCanActive
     int32  auraSpell;                                       // spell aura must be applied for spell apply )if possitive) and it don't must be applied in other case
     uint32 raceMask;                                        // can be applied only to races
     Gender gender;                                          // can be applied only to gender
@@ -764,17 +802,15 @@ struct SpellArea
 
     // helpers
     bool IsFitToRequirements(Player const* player, uint32 newZone, uint32 newArea) const;
+    void ApplyOrRemoveSpellIfCan(Player* player, uint32 newZone, uint32 newArea, bool onlyApply) const;
 };
 
-typedef std::multimap<uint32, SpellArea> SpellAreaMap;
-typedef std::multimap<uint32, SpellArea const*> SpellAreaForQuestMap;
-typedef std::multimap<uint32, SpellArea const*> SpellAreaForAuraMap;
-typedef std::multimap<uint32, SpellArea const*> SpellAreaForAreaMap;
+typedef std::multimap<uint32 /*applySpellId*/, SpellArea> SpellAreaMap;
+typedef std::multimap<uint32 /*auraSpellId*/, SpellArea const*> SpellAreaForAuraMap;
+typedef std::multimap<uint32 /*areaOrZoneId*/, SpellArea const*> SpellAreaForAreaMap;
 typedef std::pair<SpellAreaMap::const_iterator, SpellAreaMap::const_iterator> SpellAreaMapBounds;
-typedef std::pair<SpellAreaForQuestMap::const_iterator, SpellAreaForQuestMap::const_iterator> SpellAreaForQuestMapBounds;
 typedef std::pair<SpellAreaForAuraMap::const_iterator, SpellAreaForAuraMap::const_iterator>  SpellAreaForAuraMapBounds;
 typedef std::pair<SpellAreaForAreaMap::const_iterator, SpellAreaForAreaMap::const_iterator>  SpellAreaForAreaMapBounds;
-
 
 // Spell rank chain  (accessed using SpellMgr functions)
 struct SpellChainNode
@@ -820,12 +856,16 @@ typedef std::map<uint32, PetLevelupSpellSet> PetLevelupSpellMap;
 
 struct PetDefaultSpellsEntry
 {
+    PetDefaultSpellsEntry()
+    {
+        memset(&spellid, 0, sizeof(spellid));
+    }
+
     uint32 spellid[MAX_CREATURE_SPELL_DATA_SLOT];
 };
 
 // < 0 for petspelldata id, > 0 for creature_id
 typedef std::map<int32, PetDefaultSpellsEntry> PetDefaultSpellsMap;
-
 
 bool IsPrimaryProfessionSkill(uint32 skill);
 
@@ -1054,13 +1094,6 @@ class SpellMgr
 
         bool IsSkillBonusSpell(uint32 spellId) const;
 
-
-        // Spell script targets
-        SpellScriptTargetBounds GetSpellScriptTargetBounds(uint32 spell_id) const
-        {
-            return mSpellScriptTarget.equal_range(spell_id);
-        }
-
         // Spell correctness for client using
         static bool IsSpellValid(SpellEntry const* spellInfo, Player* pl = NULL, bool msg = true);
 
@@ -1108,19 +1141,6 @@ class SpellMgr
             return mSpellAreaMap.equal_range(spell_id);
         }
 
-        SpellAreaForQuestMapBounds GetSpellAreaForQuestMapBounds(uint32 quest_id, bool active) const
-        {
-            if (active)
-                return mSpellAreaForActiveQuestMap.equal_range(quest_id);
-            else
-                return mSpellAreaForQuestMap.equal_range(quest_id);
-        }
-
-        SpellAreaForQuestMapBounds GetSpellAreaForQuestEndMapBounds(uint32 quest_id) const
-        {
-            return mSpellAreaForQuestEndMap.equal_range(quest_id);
-        }
-
         SpellAreaForAuraMapBounds GetSpellAreaForAuraMapBounds(uint32 spell_id) const
         {
             return mSpellAreaForAuraMap.equal_range(spell_id);
@@ -1158,7 +1178,6 @@ class SpellMgr
     private:
         bool LoadPetDefaultSpells_helper(CreatureInfo const* cInfo, PetDefaultSpellsEntry& petDefSpells);
 
-        SpellScriptTarget  mSpellScriptTarget;
         SpellChainMap      mSpellChains;
         SpellChainMapNext  mSpellChainsNext;
         SpellLearnSkillMap mSpellLearnSkills;
@@ -1175,9 +1194,6 @@ class SpellMgr
         PetLevelupSpellMap  mPetLevelupSpellMap;
         PetDefaultSpellsMap mPetDefaultSpellsMap;           // only spells not listed in related mPetLevelupSpellMap entry
         SpellAreaMap         mSpellAreaMap;
-        SpellAreaForQuestMap mSpellAreaForQuestMap;
-        SpellAreaForQuestMap mSpellAreaForActiveQuestMap;
-        SpellAreaForQuestMap mSpellAreaForQuestEndMap;
         SpellAreaForAuraMap  mSpellAreaForAuraMap;
         SpellAreaForAreaMap  mSpellAreaForAreaMap;
 };

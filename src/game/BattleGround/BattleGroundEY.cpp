@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -30,17 +30,10 @@
 
 BattleGroundEY::BattleGroundEY()
 {
-    m_BuffChange = true;
-    m_BgObjects.resize(EY_OBJECT_MAX);
-
     m_StartMessageIds[BG_STARTING_EVENT_FIRST]  = 0;
     m_StartMessageIds[BG_STARTING_EVENT_SECOND] = LANG_BG_EY_START_ONE_MINUTE;
     m_StartMessageIds[BG_STARTING_EVENT_THIRD] = LANG_BG_EY_START_HALF_MINUTE;
     m_StartMessageIds[BG_STARTING_EVENT_FOURTH] = LANG_BG_EY_HAS_BEGUN;
-}
-
-BattleGroundEY::~BattleGroundEY()
-{
 }
 
 void BattleGroundEY::Update(uint32 diff)
@@ -75,21 +68,10 @@ void BattleGroundEY::Update(uint32 diff)
     }
 }
 
-void BattleGroundEY::StartingEventCloseDoors()
-{
-}
-
 void BattleGroundEY::StartingEventOpenDoors()
 {
     // eye-doors are despawned, not opened
     SpawnEvent(BG_EVENT_DOOR, 0, false);
-
-    for (uint8 i = 0; i < EY_NODES_MAX; ++i)
-    {
-        // randomly spawn buff
-        uint8 buff = urand(0, 2);
-        SpawnBGObject(m_BgObjects[EY_OBJECT_SPEEDBUFF_FEL_REAVER_RUINS + buff + i * 3], RESPAWN_IMMEDIATELY);
-    }
 
     // Players that join battleground after start are not eligible to get achievement.
     StartTimedAchievement(ACHIEVEMENT_CRITERIA_TYPE_WIN_BG, EY_EVENT_START_BATTLE);
@@ -190,19 +172,19 @@ void BattleGroundEY::HandleGameObjectCreate(GameObject* go)
     {
         case GO_CAPTURE_POINT_BLOOD_ELF_TOWER:
             m_towers[NODE_BLOOD_ELF_TOWER] = go->GetObjectGuid();
-            go->SetCapturePointSlider(CAPTURE_SLIDER_MIDDLE);
+            go->SetCapturePointSlider(CAPTURE_SLIDER_MIDDLE, false);
             break;
         case GO_CAPTURE_POINT_FEL_REAVER_RUINS:
             m_towers[NODE_FEL_REAVER_RUINS] = go->GetObjectGuid();
-            go->SetCapturePointSlider(CAPTURE_SLIDER_MIDDLE);
+            go->SetCapturePointSlider(CAPTURE_SLIDER_MIDDLE, false);
             break;
         case GO_CAPTURE_POINT_MAGE_TOWER:
             m_towers[NODE_MAGE_TOWER] = go->GetObjectGuid();
-            go->SetCapturePointSlider(CAPTURE_SLIDER_MIDDLE);
+            go->SetCapturePointSlider(CAPTURE_SLIDER_MIDDLE, false);
             break;
         case GO_CAPTURE_POINT_DRAENEI_RUINS:
             m_towers[NODE_DRAENEI_RUINS] = go->GetObjectGuid();
-            go->SetCapturePointSlider(CAPTURE_SLIDER_MIDDLE);
+            go->SetCapturePointSlider(CAPTURE_SLIDER_MIDDLE, false);
             break;
     }
 }
@@ -315,26 +297,6 @@ void BattleGroundEY::HandleAreaTrigger(Player* source, uint32 trigger)
                 EventPlayerCapturedFlag(source, NODE_DRAENEI_RUINS);
             break;
     }
-}
-
-bool BattleGroundEY::SetupBattleGround()
-{
-    // buffs
-    for (uint8 i = 0; i < EY_NODES_MAX; ++i)
-    {
-        AreaTriggerEntry const* at = sAreaTriggerStore.LookupEntry(eyTriggers[i]);
-        if (!at)
-        {
-            sLog.outError("BattleGroundEY: Unknown trigger: %u", eyTriggers[i]);
-            continue;
-        }
-        if (!AddObject(EY_OBJECT_SPEEDBUFF_FEL_REAVER_RUINS + i * 3, Buff_Entries[0], at->x, at->y, at->z, 0.907571f, 0, 0, 0.438371f, 0.898794f, RESPAWN_ONE_DAY)
-                || !AddObject(EY_OBJECT_SPEEDBUFF_FEL_REAVER_RUINS + i * 3 + 1, Buff_Entries[1], at->x, at->y, at->z, 0.907571f, 0, 0, 0.438371f, 0.898794f, RESPAWN_ONE_DAY)
-                || !AddObject(EY_OBJECT_SPEEDBUFF_FEL_REAVER_RUINS + i * 3 + 2, Buff_Entries[2], at->x, at->y, at->z, 0.907571f, 0, 0, 0.438371f, 0.898794f, RESPAWN_ONE_DAY))
-            sLog.outError("BattleGroundEY: Cannot spawn buff");
-    }
-
-    return true;
 }
 
 void BattleGroundEY::Reset()
@@ -587,10 +549,8 @@ WorldSafeLocsEntry const* BattleGroundEY::GetClosestGraveYard(Player* player)
 
     float distance, nearestDistance;
 
-    WorldSafeLocsEntry const* entry = NULL;
-    WorldSafeLocsEntry const* nearestEntry = NULL;
-    entry = sWorldSafeLocsStore.LookupEntry(g_id);
-    nearestEntry = entry;
+    WorldSafeLocsEntry const* entry = sWorldSafeLocsStore.LookupEntry(g_id);
+    WorldSafeLocsEntry const* nearestEntry = entry;
 
     if (!entry)
     {
@@ -601,7 +561,6 @@ WorldSafeLocsEntry const* BattleGroundEY::GetClosestGraveYard(Player* player)
     float plr_x = player->GetPositionX();
     float plr_y = player->GetPositionY();
     float plr_z = player->GetPositionZ();
-
 
     distance = (entry->x - plr_x) * (entry->x - plr_x) + (entry->y - plr_y) * (entry->y - plr_y) + (entry->z - plr_z) * (entry->z - plr_z);
     nearestDistance = distance;

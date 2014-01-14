@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -37,6 +37,7 @@
 #include "Utilities/TypeList.h"
 #include "ScriptMgr.h"
 #include "CreatureLinkingMgr.h"
+#include "vmap/DynamicTree.h"
 
 #include <bitset>
 #include <list>
@@ -54,6 +55,7 @@ class BattleGroundPersistentState;
 struct ScriptInfo;
 class BattleGround;
 class GridMap;
+class GameObjectModel;
 
 // GCC have alternative #pragma pack(N) syntax and old gcc version not support pack(push,N), also any gcc version not support it at some platform
 #if defined( __GNUC__ )
@@ -121,10 +123,10 @@ class MANGOS_DLL_SPEC Map : public GridRefManager<NGridType>
 
         virtual void Update(const uint32&);
 
-        void MessageBroadcast(Player*, WorldPacket*, bool to_self);
-        void MessageBroadcast(WorldObject*, WorldPacket*);
-        void MessageDistBroadcast(Player*, WorldPacket*, float dist, bool to_self, bool own_team_only = false);
-        void MessageDistBroadcast(WorldObject*, WorldPacket*, float dist);
+        void MessageBroadcast(Player const*, WorldPacket*, bool to_self);
+        void MessageBroadcast(WorldObject const*, WorldPacket*);
+        void MessageDistBroadcast(Player const*, WorldPacket*, float dist, bool to_self, bool own_team_only = false);
+        void MessageDistBroadcast(WorldObject const*, WorldPacket*, float dist);
 
         float GetVisibilityDistance() const { return m_VisibleDistance; }
         // function for setting up visibility distance for maps on per-type/per-Id basis
@@ -138,7 +140,7 @@ class MANGOS_DLL_SPEC Map : public GridRefManager<NGridType>
         bool IsRemovalGrid(float x, float y) const
         {
             GridPair p = MaNGOS::ComputeGridPair(x, y);
-            return(!getNGrid(p.x_coord, p.y_coord) || getNGrid(p.x_coord, p.y_coord)->GetGridState() == GRID_STATE_REMOVAL);
+            return (!getNGrid(p.x_coord, p.y_coord) || getNGrid(p.x_coord, p.y_coord)->GetGridState() == GRID_STATE_REMOVAL);
         }
 
         bool IsLoaded(float x, float y) const
@@ -216,7 +218,14 @@ class MANGOS_DLL_SPEC Map : public GridRefManager<NGridType>
         PlayerList const& GetPlayers() const { return m_mapRefManager; }
 
         // per-map script storage
-        bool ScriptsStart(ScriptMapMapName const& scripts, uint32 id, Object* source, Object* target);
+        enum ScriptExecutionParam
+        {
+            SCRIPT_EXEC_PARAM_NONE                    = 0x00,   // Start regardless if already started
+            SCRIPT_EXEC_PARAM_UNIQUE_BY_SOURCE        = 0x01,   // Start Script only if not yet started (uniqueness identified by id and source)
+            SCRIPT_EXEC_PARAM_UNIQUE_BY_TARGET        = 0x02,   // Start Script only if not yet started (uniqueness identified by id and target)
+            SCRIPT_EXEC_PARAM_UNIQUE_BY_SOURCE_TARGET = 0x03,   // Start Script only if not yet started (uniqueness identified by id, source and target)
+        };
+        bool ScriptsStart(ScriptMapMapName const& scripts, uint32 id, Object* source, Object* target, ScriptExecutionParam execParams = SCRIPT_EXEC_PARAM_NONE);
         void ScriptCommandStart(ScriptInfo const& script, uint32 delay, Object* source, Object* target);
 
         // must called with AddToWorld
@@ -254,16 +263,22 @@ class MANGOS_DLL_SPEC Map : public GridRefManager<NGridType>
         const TerrainInfo* GetTerrain() const { return m_TerrainData; }
 
         void CreateInstanceData(bool load);
-        InstanceData* GetInstanceData() { return i_data; }
+        InstanceData* GetInstanceData() const { return i_data; }
         uint32 GetScriptId() const { return i_script_id; }
 
-        void MonsterYellToMap(ObjectGuid guid, int32 textId, uint32 language, Unit* target);
-        void MonsterYellToMap(CreatureInfo const* cinfo, int32 textId, uint32 language, Unit* target, uint32 senderLowGuid = 0);
-        void PlayDirectSoundToMap(uint32 soundId, uint32 zoneId = 0);
+        void MonsterYellToMap(ObjectGuid guid, int32 textId, Language language, Unit const* target) const;
+        void MonsterYellToMap(CreatureInfo const* cinfo, int32 textId, Language language, Unit const* target, uint32 senderLowGuid = 0) const;
+        void PlayDirectSoundToMap(uint32 soundId, uint32 zoneId = 0) const;
 
-        // VMap System
-        bool IsInLineOfSight(float srcX, float srcY, float srcZ, float destX, float destY, float destZ);
-        bool GetObjectHitPos(float srcX, float srcY, float srcZ, float destX, float destY, float destZ, float& resX, float& resY, float& resZ, float pModifyDist);
+        // Dynamic VMaps
+        float GetHeight(uint32 phasemask, float x, float y, float z) const;
+        bool IsInLineOfSight(float x1, float y1, float z1, float x2, float y2, float z2, uint32 phasemask) const;
+        bool GetHitPosition(float srcX, float srcY, float srcZ, float& destX, float& destY, float& destZ, uint32 phasemask, float modifyDist) const;
+
+        // Object Model insertion/remove/test for dynamic vmaps use
+        void InsertGameObjectModel(const GameObjectModel& mdl);
+        void RemoveGameObjectModel(const GameObjectModel& mdl);
+        bool ContainsGameObjectModel(const GameObjectModel& mdl) const;
 
         // Get Holder for Creature Linking
         CreatureLinkingHolder* GetCreatureLinkingHolder() { return &m_creatureLinkingHolder; }
@@ -358,6 +373,9 @@ class MANGOS_DLL_SPEC Map : public GridRefManager<NGridType>
 
         // Holder for information about linked mobs
         CreatureLinkingHolder m_creatureLinkingHolder;
+
+        // Dynamic Map tree object
+        DynamicMapTree m_dyn_tree;
 };
 
 class MANGOS_DLL_SPEC WorldMap : public Map

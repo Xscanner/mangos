@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,20 +28,20 @@ class ADTFile;
 
 class WDTFile
 {
-public:
-    WDTFile(char* file_name, char* file_name1);
-    ~WDTFile(void);
-    bool init(char *map_id, unsigned int mapID);
+    public:
+        WDTFile(char* file_name, char* file_name1);
+        ~WDTFile(void);
+        bool init(char* map_id, unsigned int mapID);
 
-    string* gWmoInstansName;
-    int gnWMO, nMaps;
+        string* gWmoInstansName;
+        int gnWMO, nMaps;
 
-    ADTFile* GetMap(int x, int z);
+        ADTFile* GetMap(int x, int z);
 
-private:
-    MPQFile WDT;
-    bool maps[64][64];
-    string filename;
+    private:
+        MPQFile WDT;
+        bool maps[64][64];
+        string filename;
 };
 
 #endif

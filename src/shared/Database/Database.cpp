@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -45,11 +45,8 @@ void SqlConnection::FreePreparedStatements()
     m_holder.clear();
 }
 
-SqlPreparedStatement* SqlConnection::GetStmt(int nIndex)
+SqlPreparedStatement* SqlConnection::GetStmt(uint32 nIndex)
 {
-    if (nIndex < 0)
-        return NULL;
-
     // resize stmt container
     if (m_holder.size() <= nIndex)
         m_holder.resize(nIndex + 1, NULL);
@@ -501,8 +498,16 @@ bool Database::CheckRequiredField(char const* table_name, char const* required_n
             sLog.outErrorDb("  [B] You need: --> `%s.sql`", req_sql_update_name);
             sLog.outErrorDb();
             sLog.outErrorDb("You must apply all updates after [A] to [B] to use mangos with this database.");
-            sLog.outErrorDb("These updates are included in the sql/updates folder.");
-            sLog.outErrorDb("Please read the included [README] in sql/updates for instructions on updating.");
+            if (reqName.find("playerbotai") != std::string::npos)
+            {
+                sLog.outErrorDb("These updates are included in the [sql/playerbotai] folder.");
+                sLog.outErrorDb("Please read the [doc/README.Playerbot] file for instructions on updating.");
+            }
+            else
+            {
+                sLog.outErrorDb("These updates are included in the sql/updates folder.");
+                sLog.outErrorDb("Please read the included [README] in sql/updates for instructions on updating.");
+            }
         }
         else
         {

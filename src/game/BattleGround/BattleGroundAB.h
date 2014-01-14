@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -62,29 +62,6 @@ enum BG_AB_WorldStates
 const uint32 BG_AB_OP_NODESTATES[5] =    {1767, 1782, 1772, 1792, 1787};
 
 const uint32 BG_AB_OP_NODEICONS[5]  =    {1842, 1846, 1845, 1844, 1843};
-
-enum BG_AB_ObjectType
-{
-    // TODO drop them (pool-system should be used for this)
-    // buffs
-    BG_AB_OBJECT_SPEEDBUFF_STABLES       = 1,
-    BG_AB_OBJECT_REGENBUFF_STABLES       = 2,
-    BG_AB_OBJECT_BERSERKBUFF_STABLES     = 3,
-    BG_AB_OBJECT_SPEEDBUFF_BLACKSMITH    = 4,
-    BG_AB_OBJECT_REGENBUFF_BLACKSMITH    = 5,
-    BG_AB_OBJECT_BERSERKBUFF_BLACKSMITH  = 6,
-    BG_AB_OBJECT_SPEEDBUFF_FARM          = 7,
-    BG_AB_OBJECT_REGENBUFF_FARM          = 8,
-    BG_AB_OBJECT_BERSERKBUFF_FARM        = 9,
-    BG_AB_OBJECT_SPEEDBUFF_LUMBER_MILL   = 10,
-    BG_AB_OBJECT_REGENBUFF_LUMBER_MILL   = 11,
-    BG_AB_OBJECT_BERSERKBUFF_LUMBER_MILL = 12,
-    BG_AB_OBJECT_SPEEDBUFF_GOLD_MINE     = 13,
-    BG_AB_OBJECT_REGENBUFF_GOLD_MINE     = 14,
-    BG_AB_OBJECT_BERSERKBUFF_GOLD_MINE   = 15,
-    BG_AB_OBJECT_MAX                     = 16,
-};
-
 
 /* node events */
 // node-events are just event1=BG_AB_Nodes, event2=BG_AB_NodeStatus
@@ -184,11 +161,9 @@ class BattleGroundAB : public BattleGround
 
         void Update(uint32 diff) override;
         void AddPlayer(Player* plr) override;
-        virtual void StartingEventCloseDoors() override;
         virtual void StartingEventOpenDoors() override;
         void RemovePlayer(Player* plr, ObjectGuid guid) override;
         void HandleAreaTrigger(Player* source, uint32 trigger) override;
-        virtual bool SetupBattleGround() override;
         virtual void Reset() override;
         void EndBattleGround(Team winner) override;
         virtual WorldSafeLocsEntry const* GetClosestGraveYard(Player* player) override;

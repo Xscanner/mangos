@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,7 +17,7 @@
  */
 
 #include "OutdoorPvPMgr.h"
-#include "Policies/SingletonImp.h"
+#include "Policies/Singleton.h"
 #include "OutdoorPvP.h"
 #include "World.h"
 #include "Log.h"
@@ -163,20 +163,4 @@ void OutdoorPvPMgr::Update(uint32 diff)
             m_scripts[i]->Update(m_updateTimer.GetCurrent());
 
     m_updateTimer.Reset();
-}
-
-/**
-   Function that gets the capture point slider value
-
-   @param   capture point entry
-   @param   default value being returned if no saved value for the capture point was found
- */
-float OutdoorPvPMgr::GetCapturePointSliderValue(uint32 entry, float defaultValue)
-{
-    CapturePointSliderMap::const_iterator itr = m_capturePointSlider.find(entry);
-    if (itr != m_capturePointSlider.end())
-        return itr->second;
-
-    // return default value if we can't find any
-    return defaultValue;
 }

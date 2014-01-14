@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,7 +21,7 @@
 
 const char Achievementfmt[] = "niixssssssssssssssssxxxxxxxxxxxxxxxxxxiixixxxxxxxxxxxxxxxxxxii";
 const char AchievementCriteriafmt[] = "niiiiiiiissssssssssssssssxixiii";
-const char AreaTableEntryfmt[] = "iiinixxxxxissssssssssssssssxixxxxxxx";
+const char AreaTableEntryfmt[] = "iiinixxxxxissssssssssssssssxiiiiixxx";
 const char AreaGroupEntryfmt[] = "niiiiiii";
 const char AreaTriggerEntryfmt[] = "niffffffff";
 const char AuctionHouseEntryfmt[] = "niiixxxxxxxxxxxxxxxxx";
@@ -41,6 +41,7 @@ const char CreatureFamilyfmt[] = "nfifiiiiixssssssssssssssssxx";
 const char CreatureSpellDatafmt[] = "niiiixxxx";
 const char CreatureTypefmt[] = "nxxxxxxxxxxxxxxxxxx";
 const char CurrencyTypesfmt[] = "xnxi";
+const char DestructibleModelDataFmt[] = "nxxixxxixxxixxxxxxx";
 const char DungeonEncounterfmt[] = "niiiissssssssssssssssxx";
 const char DurabilityCostsfmt[] = "niiiiiiiiiiiiiiiiiiiiiiiiiiiii";
 const char DurabilityQualityfmt[] = "nf";
@@ -48,7 +49,7 @@ const char EmotesEntryfmt[] = "nxxiiix";
 const char EmotesTextEntryfmt[] = "nxixxxxxxxxxxxxxxxx";
 const char FactionEntryfmt[] = "niiiiiiiiiiiiiiiiiiffixssssssssssssssssxxxxxxxxxxxxxxxxxx";
 const char FactionTemplateEntryfmt[] = "niiiiiiiiiiiii";
-const char GameObjectDisplayInfofmt[] = "nxxxxxxxxxxxfxxxxxx";
+const char GameObjectDisplayInfofmt[] = "nsxxxxxxxxxxffffffx";
 const char GemPropertiesEntryfmt[] = "nixxi";
 const char GlyphPropertiesfmt[] = "niii";
 const char GlyphSlotfmt[] = "nii";
@@ -74,6 +75,7 @@ const char ItemLimitCategoryEntryfmt[] = "nxxxxxxxxxxxxxxxxxii";
 const char ItemRandomPropertiesfmt[] = "nxiiiiissssssssssssssssx";
 const char ItemRandomSuffixfmt[] = "nssssssssssssssssxxiiiiiiiiii";
 const char ItemSetEntryfmt[] = "dssssssssssssssssxxxxxxxxxxxxxxxxxxiiiiiiiiiiiiiiiiii";
+const char LiquidTypefmt[] = "nxxixixxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 const char LockEntryfmt[] = "niiiiiiiiiiiiiiiiiiiiiiiixxxxxxxx";
 const char MailTemplateEntryfmt[] = "nxxxxxxxxxxxxxxxxxssssssssssssssssx";
 const char MapEntryfmt[] = "nxixxssssssssssssssssxixxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxixiffxixx";

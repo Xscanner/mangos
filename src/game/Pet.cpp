@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -124,7 +124,6 @@ bool Pet::LoadPetFromDB(Player* owner, uint32 petentry, uint32 petnumber, bool c
         delete result;
         return false;
     }
-
 
     uint32 summon_spell_id = fields[17].GetUInt32();
     SpellEntry const* spellInfo = sSpellStore.LookupEntry(summon_spell_id);
@@ -600,7 +599,6 @@ void Pet::RegenerateAll(uint32 update_diff)
         m_happinessTimer -= update_diff;
 }
 
-
 void Pet::Regenerate(Powers power)
 {
     uint32 curValue = GetPower(power);
@@ -714,7 +712,6 @@ void Pet::Unsummon(PetSaveMode mode, Unit* owner /*= NULL*/)
 
         if (p_owner)
         {
-
             // not save secondary permanent pet as current
             if (mode == PET_SAVE_AS_CURRENT && p_owner->GetTemporaryUnsummonedPetNumber() &&
                     p_owner->GetTemporaryUnsummonedPetNumber() != GetCharmInfo()->GetPetNumber())
@@ -974,7 +971,6 @@ bool Pet::InitStatsForLevel(uint32 petlevel, Unit* owner)
                 {
                     case CLASS_WARLOCK:
                     {
-
                         // the damage bonus used for pets is either fire or shadow damage, whatever is higher
                         uint32 fire  = owner->GetUInt32Value(PLAYER_FIELD_MOD_DAMAGE_DONE_POS + SPELL_SCHOOL_FIRE);
                         uint32 shadow = owner->GetUInt32Value(PLAYER_FIELD_MOD_DAMAGE_DONE_POS + SPELL_SCHOOL_SHADOW);
@@ -1892,7 +1888,6 @@ void Pet::UpdateFreeTalentPoints(bool resetIfNeed)
     else
         SetFreeTalentPoints(talentPointsForLevel - m_usedTalentCount);
 }
-
 
 void Pet::InitTalentForLevel()
 {

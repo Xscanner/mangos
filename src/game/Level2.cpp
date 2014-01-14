@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -170,7 +170,6 @@ void ChatHandler::ShowTriggerTargetListHelper(uint32 id, AreaTrigger const* at, 
 
 void ChatHandler::ShowTriggerListHelper(AreaTriggerEntry const* atEntry)
 {
-
     char const* tavern = sObjectMgr.IsTavernAreaTrigger(atEntry->id) ? GetMangosString(LANG_TRIGGER_TAVERN) : "";
     char const* quest = sObjectMgr.GetQuestForAreaTrigger(atEntry->id) ? GetMangosString(LANG_TRIGGER_QUEST) : "";
 
@@ -604,7 +603,6 @@ bool ChatHandler::HandleGoCreatureCommand(char* args)
                         continue;
 
                     worker(*cr_data);
-
                 }
                 while (result->NextRow());
 
@@ -753,7 +751,6 @@ bool ChatHandler::HandleGoObjectCommand(char* args)
                         continue;
 
                     worker(*go_data);
-
                 }
                 while (result->NextRow());
 
@@ -891,6 +888,11 @@ bool ChatHandler::HandleGameObjectTargetCommand(char* args)
         PSendSysMessage(LANG_COMMAND_RAWPAWNTIMES, defRespawnDelayStr.c_str(), curRespawnDelayStr.c_str());
 
         ShowNpcOrGoSpawnInformation<GameObject>(target->GetGUIDLow());
+
+        if (target->GetGoType() == GAMEOBJECT_TYPE_DOOR)
+            PSendSysMessage(LANG_COMMAND_GO_STATUS_DOOR, target->GetGoState(), target->getLootState(), GetOnOffStr(target->IsCollisionEnabled()), goI->door.startOpen ? "open" : "closed");
+        else
+            PSendSysMessage(LANG_COMMAND_GO_STATUS, target->GetGoState(), target->getLootState(), GetOnOffStr(target->IsCollisionEnabled()));
     }
     return true;
 }
@@ -1456,8 +1458,7 @@ bool ChatHandler::HandleModifyRepCommand(char* args)
     if (!*args)
         return false;
 
-    Player* target = NULL;
-    target = getSelectedPlayer();
+    Player* target = getSelectedPlayer();
 
     if (!target)
     {
@@ -1627,7 +1628,7 @@ bool ChatHandler::HandleNpcAddVendorItemCommand(char* args)
 
     uint32 vendor_entry = vendor ? vendor->GetEntry() : 0;
 
-    if (!sObjectMgr.IsVendorItemValid(false, "npc_vendor", vendor_entry, itemId, maxcount, incrtime, extendedcost, m_session->GetPlayer()))
+    if (!sObjectMgr.IsVendorItemValid(false, "npc_vendor", vendor_entry, itemId, maxcount, incrtime, extendedcost, 0, m_session->GetPlayer()))
     {
         SetSentErrorMessage(true);
         return false;
@@ -2362,7 +2363,6 @@ bool ChatHandler::HandleNpcSubNameCommand(char* /*args*/)
 
     if (strlen((char*)args)>75)
     {
-
         PSendSysMessage(LANG_TOO_LONG_SUBNAME, strlen((char*)args)-75);
         return true;
     }
@@ -2441,7 +2441,6 @@ bool ChatHandler::HandleDeMorphCommand(char* /*args*/)
     Unit* target = getSelectedUnit();
     if (!target)
         target = m_session->GetPlayer();
-
 
     // check online security
     else if (target->GetTypeId() == TYPEID_PLAYER && HasLowerSecurity((Player*)target))
@@ -3561,7 +3560,8 @@ bool ChatHandler::HandleWpShowCommand(char* args)
             uint32 model2           = fields[11].GetUInt32();
 
             // Get the creature for which we read the waypoint
-            Creature* wpCreature = m_session->GetPlayer()->GetMap()->GetCreature(ObjectGuid(HIGHGUID_UNIT, VISUAL_WAYPOINT, wpGuid));
+            CreatureData const* data = sObjectMgr.GetCreatureData(wpGuid);
+            Creature* wpCreature = m_session->GetPlayer()->GetMap()->GetCreature(data ? data->GetObjectGuid(wpGuid) : ObjectGuid(HIGHGUID_UNIT, VISUAL_WAYPOINT, wpGuid));
 
             PSendSysMessage(LANG_WAYPOINT_INFO_TITLE, point, (wpCreature ? wpCreature->GetName() : "<not found>"), wpGuid);
             PSendSysMessage(LANG_WAYPOINT_INFO_WAITTIME, waittime);
@@ -3571,7 +3571,6 @@ bool ChatHandler::HandleWpShowCommand(char* args)
             PSendSysMessage(LANG_WAYPOINT_INFO_SPELL, spell);
             for (int i = 0;  i < MAX_WAYPOINT_TEXT; ++i)
                 PSendSysMessage(LANG_WAYPOINT_INFO_TEXT, i + 1, textid[i], (textid[i] ? GetMangosString(textid[i]) : ""));
-
         }
         while (result->NextRow());
         // Cleanup memory
@@ -3612,7 +3611,6 @@ bool ChatHandler::HandleWpShowCommand(char* args)
                     pCreature->DeleteFromDB();
                     pCreature->AddObjectToRemoveList();
                 }
-
             }
             while (result2->NextRow());
             delete result2;
@@ -3904,7 +3902,6 @@ bool ChatHandler::HandleWpExportCommand(char* args)
         outfile << ", ";
         outfile << fields[14].GetUInt32();                  // textid5
         outfile << ");\n ";
-
     }
     while (result->NextRow());
     delete result;
@@ -3924,19 +3921,18 @@ bool ChatHandler::HandleWpImportCommand(char* args)
     if (!arg_str)
         return false;
 
+    std::ifstream stream(arg_str);
+    if (!stream.is_open())
+        return false;
+
     std::string line;
-    std::ifstream infile(arg_str);
-    if (infile.is_open())
+    while (getline(stream, line))
     {
-        while (! infile.eof())
-        {
-            getline(infile, line);
-            // cout << line << endl;
-            QueryResult* result = WorldDatabase.Query(line.c_str());
-            delete result;
-        }
-        infile.close();
+        QueryResult* result = WorldDatabase.Query(line.c_str());
+        delete result;
     }
+    stream.close();
+
     PSendSysMessage(LANG_WAYPOINT_IMPORTED);
 
     return true;
@@ -4546,7 +4542,6 @@ bool ChatHandler::ShowAccountListHelper(QueryResult* result, uint32* limit, bool
         else
             PSendSysMessage(LANG_ACCOUNT_LIST_LINE_CONSOLE,
                             account, fields[1].GetString(), char_name, fields[2].GetString(), fields[3].GetUInt32(), fields[4].GetUInt32());
-
     }
     while (result->NextRow());
 
@@ -4784,6 +4779,12 @@ bool ChatHandler::HandlePoolInfoCommand(char* args)
     uint32 pool_id;
     if (!ExtractUint32KeyFromLink(&args, "Hpool", pool_id))
         return false;
+
+    if (pool_id > sPoolMgr.GetMaxPoolId())
+    {
+        PSendSysMessage(LANG_POOL_ENTRY_LOWER_MAX_POOL, pool_id, sPoolMgr.GetMaxPoolId());
+        return true;
+    }
 
     Player* player = m_session ? m_session->GetPlayer() : NULL;
 

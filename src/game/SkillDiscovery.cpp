@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@
 #include "Database/DatabaseEnv.h"
 #include "Log.h"
 #include "ProgressBar.h"
-#include "Policies/SingletonImp.h"
+#include "Policies/Singleton.h"
 #include "World.h"
 #include "Util.h"
 #include "SkillDiscovery.h"
@@ -48,7 +48,6 @@ static SkillDiscoveryMap SkillDiscoveryStore;
 
 void LoadSkillDiscoveryTable()
 {
-
     SkillDiscoveryStore.clear();                            // need for reload
 
     uint32 count = 0;

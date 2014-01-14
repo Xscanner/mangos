@@ -115,6 +115,7 @@ enum WarlockSpells
     SHADOWBURN_1                    = 17877,
     SHADOWFLAME_1                   = 47897,
     SHADOWFURY_1                    = 30283,
+    SHOOT_3                         = 5019,
     SOUL_FIRE_1                     = 6353,
     SOUL_LINK_1                     = 19028,
     SOULSHATTER_1                   = 29858,
@@ -135,8 +136,8 @@ public:
     virtual ~PlayerbotWarlockAI();
 
     // all combat actions go here
-    bool DoFirstCombatManeuver(Unit*);
-    void DoNextCombatManeuver(Unit*);
+    CombatManeuverReturns DoFirstCombatManeuver(Unit* pTarget);
+    CombatManeuverReturns DoNextCombatManeuver(Unit* pTarget);
 
     // all non combat actions go here, ex buffs, heals, rezzes
     void DoNonCombatActions();
@@ -145,6 +146,14 @@ public:
     //void BuffPlayer(Player *target);
 
 private:
+    CombatManeuverReturns DoFirstCombatManeuverPVE(Unit* pTarget);
+    CombatManeuverReturns DoNextCombatManeuverPVE(Unit* pTarget);
+    CombatManeuverReturns DoFirstCombatManeuverPVP(Unit* pTarget);
+    CombatManeuverReturns DoNextCombatManeuverPVP(Unit* pTarget);
+
+    CombatManeuverReturns CastSpell(uint32 nextAction, Unit *pTarget = NULL) { return CastSpellWand(nextAction, pTarget, SHOOT); }
+
+    void CheckDemon();
 
     // CURSES
     uint32 CURSE_OF_WEAKNESS,
@@ -153,6 +162,8 @@ private:
            CURSE_OF_TONGUES,
            CURSE_OF_THE_ELEMENTS,
            CURSE_OF_DOOM;
+    // ranged
+    uint32 SHOOT;
 
     // AFFLICTION
     uint32 CORRUPTION,
@@ -194,7 +205,8 @@ private:
            DETECT_INVISIBILITY,
            CREATE_FIRESTONE,
            CREATE_SOULSTONE,
-           CREATE_HEALTHSTONE;
+           CREATE_HEALTHSTONE,
+           CREATE_SPELLSTONE;
 
     // DEMON SUMMON
     uint32 SUMMON_IMP,
@@ -222,9 +234,6 @@ private:
            SUFFERING,
            TORMENT;
 
-    // first aid
-    uint32 RECENTLY_BANDAGED;
-
     // racial
     uint32 ARCANE_TORRENT,
            GIFT_OF_THE_NAARU,
@@ -236,11 +245,6 @@ private:
            WAR_STOMP,
            BERSERKING,
            WILL_OF_THE_FORSAKEN;
-
-    uint32 SpellSequence,
-           LastSpellCurse,
-           LastSpellAffliction,
-           LastSpellDestruction;
 
     uint32 m_lastDemon;      // Last demon entry used for spell initialization
     uint32 m_demonOfChoice;  // Preferred demon entry

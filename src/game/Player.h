@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -37,6 +37,7 @@
 #include "ReputationMgr.h"
 #include "BattleGround/BattleGround.h"
 #include "SharedDefines.h"
+#include "Chat.h"
 
 #include<string>
 #include<vector>
@@ -775,16 +776,6 @@ enum EnviromentalDamage
     DAMAGE_FALL_TO_VOID         = 6                         // custom case for fall without durability loss
 };
 
-enum PlayerChatTag
-{
-    CHAT_TAG_NONE               = 0x00,
-    CHAT_TAG_AFK                = 0x01,
-    CHAT_TAG_DND                = 0x02,
-    CHAT_TAG_GM                 = 0x04,
-    CHAT_TAG_COM                = 0x08,                     // Commentator
-    CHAT_TAG_DEV                = 0x10,                     // Developer
-};
-
 enum PlayedTimeIndex
 {
     PLAYED_TIME_TOTAL           = 0,
@@ -936,7 +927,6 @@ struct BGData
 
     Team bgTeam;                                            ///< What side the player will be added to, saved
 
-
     uint32 mountSpell;                                      ///< Mount used before join to bg, saved
     uint32 taxiPath[2];                                     ///< Current taxi active path start/end nodes, saved
 
@@ -1060,7 +1050,7 @@ class MANGOS_DLL_SPEC Player : public Unit
         void ToggleDND();
         bool isAFK() const { return HasFlag(PLAYER_FLAGS, PLAYER_FLAGS_AFK); }
         bool isDND() const { return HasFlag(PLAYER_FLAGS, PLAYER_FLAGS_DND); }
-        uint8 GetChatTag() const;
+        ChatTagFlags GetChatTag() const;
         std::string autoReplyMsg;
 
         uint32 GetBarberShopCost(uint8 newhairstyle, uint8 newhaircolor, uint8 newfacialhair, uint32 newskintone);
@@ -1099,7 +1089,6 @@ class MANGOS_DLL_SPEC Player : public Unit
                 m_ExtraFlags |= PLAYER_EXTRA_AUCTION_NEUTRAL;
         }
 
-
         void GiveXP(uint32 xp, Unit* victim);
         void GiveLevel(uint32 level);
 
@@ -1135,7 +1124,6 @@ class MANGOS_DLL_SPEC Player : public Unit
         void Yell(const std::string& text, const uint32 language);
         void TextEmote(const std::string& text);
         void Whisper(const std::string& text, const uint32 language, ObjectGuid receiver);
-        void BuildPlayerChat(WorldPacket* data, uint8 msgtype, const std::string& text, uint32 language) const;
 
         /*********************************************************/
         /***                    STORAGE SYSTEM                 ***/
@@ -1185,7 +1173,6 @@ class MANGOS_DLL_SPEC Player : public Unit
                 return EQUIP_ERR_ITEM_NOT_FOUND;
             uint32 count = pItem->GetCount();
             return _CanStoreItem(bag, slot, dest, pItem->GetEntry(), count, pItem, swap, NULL);
-
         }
         InventoryResult CanStoreItems(Item** pItem, int count) const;
         InventoryResult CanEquipNewItem(uint8 slot, uint16& dest, uint32 item, bool swap) const;
@@ -1208,7 +1195,7 @@ class MANGOS_DLL_SPEC Player : public Unit
         bool StoreNewItemInBestSlots(uint32 item_id, uint32 item_count);
         Item* StoreNewItemInInventorySlot(uint32 itemEntry, uint32 amount);
 
-        void AutoStoreLoot(uint32 loot_id, LootStore const& store, bool broadcast = false, uint8 bag = NULL_BAG, uint8 slot = NULL_SLOT);
+        void AutoStoreLoot(WorldObject const* lootTarget, uint32 loot_id, LootStore const& store, bool broadcast = false, uint8 bag = NULL_BAG, uint8 slot = NULL_SLOT);
         void AutoStoreLoot(Loot& loot, bool broadcast = false, uint8 bag = NULL_BAG, uint8 slot = NULL_SLOT);
 
         Item* ConvertItem(Item* item, uint32 newItemId);
@@ -1855,10 +1842,10 @@ class MANGOS_DLL_SPEC Player : public Unit
         bool SetPosition(float x, float y, float z, float orientation, bool teleport = false);
         void UpdateUnderwaterState(Map* m, float x, float y, float z);
 
-        void SendMessageToSet(WorldPacket* data, bool self) override;// overwrite Object::SendMessageToSet
-        void SendMessageToSetInRange(WorldPacket* data, float fist, bool self) override;
+        void SendMessageToSet(WorldPacket* data, bool self) const override;// overwrite Object::SendMessageToSet
+        void SendMessageToSetInRange(WorldPacket* data, float fist, bool self) const override;
         // overwrite Object::SendMessageToSetInRange
-        void SendMessageToSetInRange(WorldPacket* data, float dist, bool self, bool own_team_only);
+        void SendMessageToSetInRange(WorldPacket* data, float dist, bool self, bool own_team_only) const;
 
         Corpse* GetCorpse() const;
         void SpawnCorpseBones();
@@ -1917,7 +1904,7 @@ class MANGOS_DLL_SPEC Player : public Unit
         void SetSemaphoreTeleportFar(bool semphsetting) { mSemaphoreTeleport_Far = semphsetting; }
         void ProcessDelayedOperations();
 
-        void CheckAreaExploreAndOutdoor(void);
+        void CheckAreaExploreAndOutdoor();
 
         static Team TeamForRace(uint8 race);
         Team GetTeam() const { return m_team; }
@@ -1960,9 +1947,9 @@ class MANGOS_DLL_SPEC Player : public Unit
 
         // End of PvP System
 
-        void SetDrunkValue(uint16 newDrunkValue, uint32 itemid = 0);
-        uint16 GetDrunkValue() const { return m_drunk; }
-        static DrunkenState GetDrunkenstateByValue(uint16 value);
+        void SetDrunkValue(uint8 newDrunkValue, uint32 itemId = 0);
+        uint8 GetDrunkValue() const { return GetByteValue(PLAYER_BYTES_3, 1); }
+        static DrunkenState GetDrunkenstateByValue(uint8 value);
 
         uint32 GetDeathTimer() const { return m_deathTimer; }
         uint32 GetCorpseReclaimDelay(bool pvp) const;
@@ -2021,7 +2008,7 @@ class MANGOS_DLL_SPEC Player : public Unit
 
         void SendInitWorldStates(uint32 zone, uint32 area);
         void SendUpdateWorldState(uint32 Field, uint32 Value);
-        void SendDirectMessage(WorldPacket* data);
+        void SendDirectMessage(WorldPacket* data) const;
         void FillBGWeekendWorldStates(WorldPacket& data, uint32& count);
 
         void SendAurasForTarget(Unit* target);
@@ -2335,7 +2322,6 @@ class MANGOS_DLL_SPEC Player : public Unit
         void UpdateAchievementCriteria(AchievementCriteriaTypes type, uint32 miscvalue1 = 0, uint32 miscvalue2 = 0, Unit* unit = NULL, uint32 time = 0);
         void StartTimedAchievementCriteria(AchievementCriteriaTypes type, uint32 timedRequirementId, time_t startTime = 0);
 
-
         bool HasTitle(uint32 bitIndex) const;
         bool HasTitle(CharTitlesEntry const* title) const { return HasTitle(title->bit_index); }
         void SetTitle(CharTitlesEntry const* title, bool lost = false);
@@ -2350,7 +2336,7 @@ class MANGOS_DLL_SPEC Player : public Unit
         void SetPlayerbotMgr(PlayerbotMgr* mgr) { assert(!m_playerbotAI && !m_playerbotMgr); m_playerbotMgr=mgr; }
         PlayerbotMgr* GetPlayerbotMgr() { return m_playerbotMgr; }
         void SetBotDeathTimer() { m_deathTimer = 0; }
-        bool IsInDuel(Player const* player) const { return duel && (duel->opponent == player || duel->initiator == player) && duel->startTime != 0; }
+        bool IsInDuel() const { return duel && duel->startTime != 0; }
 
     protected:
 
@@ -2527,12 +2513,12 @@ class MANGOS_DLL_SPEC Player : public Unit
         bool   m_MonthlyQuestChanged;
 
         uint32 m_drunkTimer;
-        uint16 m_drunk;
         uint32 m_weaponChangeTimer;
 
         uint32 m_zoneUpdateId;
         uint32 m_zoneUpdateTimer;
         uint32 m_areaUpdateId;
+        uint32 m_positionStatusUpdateTimer;
 
         uint32 m_deathTimer;
         time_t m_deathExpireTime;
@@ -2640,6 +2626,8 @@ class MANGOS_DLL_SPEC Player : public Unit
 
         uint32 m_lastFallTime;
         float  m_lastFallZ;
+
+        LiquidTypeEntry const* m_lastLiquid;
 
         int32 m_MirrorTimer[MAX_TIMERS];
         uint8 m_MirrorTimerFlags;

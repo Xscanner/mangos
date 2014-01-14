@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2012 MaNGOS <http://getmangos.com/>
+ * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -34,7 +34,7 @@ class Creature;
 class ThreatManager;
 struct SpellEntry;
 
-#define THREAT_UPDATE_INTERVAL 1 * IN_MILLISECONDS    // Server should send threat update to client periodically each second
+#define THREAT_UPDATE_INTERVAL (1 * IN_MILLISECONDS)        // Server should send threat update to client periodically each second
 
 //==============================================================
 // Class to calculate the real threat based
@@ -136,7 +136,6 @@ class ThreatManager;
 
 typedef std::list<HostileReference*> ThreatList;
 
-
 class MANGOS_DLL_SPEC ThreatContainer
 {
     private:
@@ -164,7 +163,7 @@ class MANGOS_DLL_SPEC ThreatContainer
 
         bool isDirty() const { return iDirty; }
 
-        bool empty() const { return(iThreatList.empty()); }
+        bool empty() const { return iThreatList.empty(); }
 
         HostileReference* getMostHated() { return iThreatList.empty() ? NULL : iThreatList.front(); }
 
